@@ -35,6 +35,9 @@ class MainGateView(QtWidgets.QWidget):
     # ──────────────────────────────────────────────────────────────
     def __init__(self) -> None:
         super().__init__()
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -59,12 +62,15 @@ class MainGateView(QtWidgets.QWidget):
     def _build_header(self) -> QtWidgets.QFrame:
         bar = QtWidgets.QFrame()
         bar.setObjectName("HeaderBar")
+        bar.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed
+        )
 
         layout = QtWidgets.QHBoxLayout(bar)
         layout.setContentsMargins(16, 0, 16, 0)
         layout.setSpacing(12)
 
-        # Logo
+        # ── Left group: logo + title ─────────────────────────────
         logo_path = get_logo_path("light")
         self._logo_label = QtWidgets.QLabel()
         if logo_path:
@@ -79,27 +85,33 @@ class MainGateView(QtWidgets.QWidget):
             )
         layout.addWidget(self._logo_label)
 
-        # Title
         title = QtWidgets.QLabel("Smart Gate")
         title.setObjectName("HeaderTitle")
         layout.addWidget(title)
 
         layout.addSpacing(24)
 
-        # Centre info
+        # ── Centre group: gate/lane, user, online badge ──────────
         self.gate_lane_label = QtWidgets.QLabel("Gate/Lane: -")
         self.user_label = QtWidgets.QLabel("User: -")
         self.online_status_label = QtWidgets.QLabel("Offline")
         self.online_status_label.setObjectName("HeaderBadgeOffline")
 
         for lbl in (self.gate_lane_label, self.user_label):
+            lbl.setSizePolicy(
+                QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred
+            )
             layout.addWidget(lbl)
 
+        self.online_status_label.setSizePolicy(
+            QtWidgets.QSizePolicy.Maximum, QtWidgets.QSizePolicy.Preferred
+        )
         layout.addWidget(self.online_status_label)
 
+        # Flexible spacer pushes everything after it to the right
         layout.addStretch(1)
 
-        # Right buttons
+        # ── Right group: action buttons (always pinned right) ────
         self.sync_now_button = QtWidgets.QPushButton("Sync Now")
         self.sync_now_button.setObjectName("HeaderSyncBtn")
         self.sync_now_button.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
@@ -115,6 +127,9 @@ class MainGateView(QtWidgets.QWidget):
 
         for btn in (self.sync_now_button, self.settings_button,
                     self.fullscreen_button, self.logout_button):
+            btn.setSizePolicy(
+                QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed
+            )
             layout.addWidget(btn)
 
         return bar
@@ -151,6 +166,9 @@ class MainGateView(QtWidgets.QWidget):
         splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         splitter.setHandleWidth(5)
         splitter.setChildrenCollapsible(False)
+        splitter.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
 
         splitter.addWidget(self._build_left_panel())
         splitter.addWidget(self._build_right_panel())
