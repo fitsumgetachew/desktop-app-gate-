@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 
 import cv2
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from smart_gate.models.domain import EventRecord
 from smart_gate.repositories.allowlist_repo import AllowlistRepository
@@ -25,6 +25,7 @@ from smart_gate.ui.login_view import LoginView
 from smart_gate.ui.main_view import MainGateView
 from smart_gate.ui.settings_view import SettingsPage
 from smart_gate.utils.config import AppConfig, load_config
+from smart_gate.ui.theme import SIT_STYLESHEET
 from smart_gate.utils.logging import setup_logging
 from smart_gate.utils.paths import ensure_dir
 from smart_gate.utils.time import now_ts
@@ -129,6 +130,18 @@ class AppWindow(QtWidgets.QMainWindow):
     def __init__(self, config: AppConfig) -> None:
         super().__init__()
         self.setWindowTitle("Smart Gate Desktop")
+
+        # Ensure native window controls (close, min, max) + resizable edges.
+        # Explicitly set default flags so no prior code accidentally
+        # removes the title-bar or sets a frameless hint.
+        self.setWindowFlags(
+            QtCore.Qt.Window
+            | QtCore.Qt.WindowCloseButtonHint
+            | QtCore.Qt.WindowMinimizeButtonHint
+            | QtCore.Qt.WindowMaximizeButtonHint
+        )
+        self.setMinimumSize(900, 560)
+
         self.config = config
 
         self.db = Database()
@@ -637,6 +650,16 @@ def main() -> None:
     config = load_config()
 
     app = QtWidgets.QApplication([])
+
+    # ── Load Poppins font if bundled, otherwise fall back to system ──
+    _fonts_dir = Path(__file__).resolve().parent / "assets" / "fonts"
+    if _fonts_dir.is_dir():
+        for font_file in _fonts_dir.glob("*.ttf"):
+            QtGui.QFontDatabase.addApplicationFont(str(font_file))
+
+    # ── Apply SIT branded stylesheet globally ────────────────────
+    app.setStyleSheet(SIT_STYLESHEET)
+
     window = AppWindow(config)
     window.resize(1200, 700)
     window.show()
