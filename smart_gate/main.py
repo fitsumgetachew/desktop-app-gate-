@@ -131,15 +131,12 @@ class AppWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.setWindowTitle("Smart Gate Desktop")
 
-        # Ensure native window controls (close, min, max) + resizable edges.
-        # Explicitly set default flags so no prior code accidentally
-        # removes the title-bar or sets a frameless hint.
-        self.setWindowFlags(
-            QtCore.Qt.Window
-            | QtCore.Qt.WindowCloseButtonHint
-            | QtCore.Qt.WindowMinimizeButtonHint
-            | QtCore.Qt.WindowMaximizeButtonHint
-        )
+        # Use the default Qt.Window flag – this gives a native OS title bar
+        # with close / minimise / maximise buttons and resizable edges on
+        # every platform.  Do NOT add explicit button-hint flags here
+        # because on Linux / Ubuntu that *removes* the system menu hint
+        # and can break the title-bar behaviour.
+        self.setWindowFlags(QtCore.Qt.Window)
         self.setMinimumSize(900, 560)
 
         self.config = config
@@ -634,8 +631,10 @@ class AppWindow(QtWidgets.QMainWindow):
     def _toggle_fullscreen(self) -> None:
         if self.isFullScreen():
             self.showNormal()
+            self.main_view.fullscreen_button.setText("Fullscreen")
         else:
             self.showFullScreen()
+            self.main_view.fullscreen_button.setText("Exit Fullscreen")
 
     def closeEvent(self, event) -> None:
         self.camera_service.stop()
