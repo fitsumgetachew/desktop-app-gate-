@@ -39,3 +39,7 @@ def get_default_db_path() -> Path:
 
 def get_default_evidence_dir() -> Path:
     return ensure_dir(get_app_data_dir() / "evidence")
+
+
+def get_detector_model_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "assets" / "models" / "detector.onnx"

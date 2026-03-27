@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 
 import cv2
+import requests
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from smart_gate.models.domain import EventRecord
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 class LoginWorker(QtCore.QThread):
-    login_success = QtCore.Signal(str)
+    login_success = QtCore.Signal(str, bool)  # (access_token, device_registered)
     login_error = QtCore.Signal(str)
 
     def __init__(self, config: AppConfig, db_path: Path, email: str, password: str) -> None:
@@ -56,8 +57,31 @@ class LoginWorker(QtCore.QThread):
             device_repo = DeviceRepository(conn)
             api = ApiClient(self.config)
             auth_service = AuthService(api, device_repo)
+
+            # Two-step desktop auth: start → exchange → tokens stored by AuthService
             data = auth_service.login(self.email, self.password)
-            self.login_success.emit(data["access_token"])
+            token = data["access_token"]
+
+            # Register device (idempotent — safe to call on every login)
+            device = device_repo.get_device()
+            if device:
+                try:
+                    from smart_gate.services.device_service import DeviceService
+                    device_service = DeviceService(api, device_repo)
+                    device_service.register_device(token, device)
+                except Exception as exc:
+                    logger.warning("Device registration failed: %s", exc)
+
+            # Check whether this device is registered on the server
+            device_registered = True  # default: allow through on network failure
+            if device:
+                try:
+                    check_resp = api.check_device(token, device.device_id)
+                    device_registered = check_resp.get("registered", True)
+                except Exception as exc:
+                    logger.warning("Device check failed (proceeding offline): %s", exc)
+
+            self.login_success.emit(token, device_registered)
         except Exception as exc:
             logger.exception("Login failed")
             self.login_error.emit(str(exc))
@@ -65,24 +89,6 @@ class LoginWorker(QtCore.QThread):
             if conn:
                 conn.close()
 
-
-class EventUploadWorker(QtCore.QThread):
-    upload_success = QtCore.Signal(str)
-    upload_error = QtCore.Signal(str, str)
-
-    def __init__(self, api: ApiClient, token: str, event_id: str, payload: dict) -> None:
-        super().__init__()
-        self.api = api
-        self.token = token
-        self.event_id = event_id
-        self.payload = payload
-
-    def run(self) -> None:
-        try:
-            self.api.post_event(self.token, self.payload)
-            self.upload_success.emit(self.event_id)
-        except Exception as exc:
-            self.upload_error.emit(self.event_id, str(exc))
 
 
 class LookupWorker(QtCore.QThread):
@@ -100,12 +106,13 @@ class LookupWorker(QtCore.QThread):
         try:
             data = self.api.lookup_vehicle(self.token, self.plate_number)
             self.lookup_success.emit(data)
-        except Exception as exc:
-            message = str(exc)
-            if "404" in message or "Not Found" in message:
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
                 self.lookup_not_found.emit()
             else:
-                self.lookup_error.emit(message)
+                self.lookup_error.emit(str(exc))
+        except Exception as exc:
+            self.lookup_error.emit(str(exc))
 
 
 class RegisterVehicleWorker(QtCore.QThread):
@@ -171,8 +178,10 @@ class AppWindow(QtWidgets.QMainWindow):
 
         self.is_online = False
         self.last_capture_path: str | None = None
-        self._uploaders: list[EventUploadWorker] = []
+        self._lookup_workers: list[LookupWorker] = []
+        self._temp_permit_workers: list[RegisterVehicleWorker] = []
         self._pending_recheck_plate: str | None = None
+        self._last_ai_result: dict | None = None  # populated by ALPR pipeline
 
         self.stack = QtWidgets.QStackedWidget()
         self.login_view = LoginView()
@@ -207,6 +216,7 @@ class AppWindow(QtWidgets.QMainWindow):
         self.login_view.login_requested.connect(self._handle_login)
         self.camera_service.frame_ready.connect(self.main_view.update_frame)
         self.camera_service.status_changed.connect(self.main_view.set_camera_status)
+        self.camera_service.plate_detected.connect(self._on_plate_detected)
         self.main_view.decision_requested.connect(self._handle_decision)
         self.main_view.capture_requested.connect(self._handle_capture)
         self.main_view.settings_requested.connect(self._open_settings)
@@ -225,6 +235,7 @@ class AppWindow(QtWidgets.QMainWindow):
         self.sync_worker.sync_status.connect(self._handle_sync_status)
         self.sync_worker.last_sync_time.connect(self._handle_last_sync_time)
         self.sync_worker.next_sync_time.connect(self._handle_next_sync_time)
+        self.sync_worker.auth_required.connect(self._handle_auth_required)
 
     def _create_sync_worker(self) -> SyncWorker:
         worker = SyncWorker(
@@ -241,14 +252,14 @@ class AppWindow(QtWidgets.QMainWindow):
         self.login_worker.login_error.connect(self._on_login_error)
         self.login_worker.start()
 
-    def _on_login_success(self, token: str) -> None:
+    def _on_login_success(self, token: str, device_registered: bool) -> None:
+        if not device_registered:
+            self.login_view.set_status(
+                "Device not registered on server. Contact your administrator."
+            )
+            return
+
         self.login_view.set_status("Login success")
-        try:
-            device = self.device_repo.get_device()
-            if device:
-                self.device_service.register_device(token, device)
-        except Exception as exc:
-            logger.warning("Device registration failed: %s", exc)
         user_profile = self.device_repo.get_user_profile()
         if user_profile:
             self.main_view.set_user(user_profile.email)
@@ -302,6 +313,31 @@ class AppWindow(QtWidgets.QMainWindow):
         self.last_capture_path = path
         QtWidgets.QMessageBox.information(self, "Capture", f"Saved to {path}")
 
+    def _on_plate_detected(
+        self,
+        plate_number: str,
+        confidence: float,
+        raw_text: str,
+        ocr_confidence: float,
+        crop,
+    ) -> None:
+        """Called from the camera worker thread (via Qt signal) when ALPR commits a plate."""
+        # Save the plate crop as evidence for the upcoming decision
+        evidence_path = None
+        try:
+            evidence_path = self._save_frame(crop, suffix=f"ai_{plate_number}")
+        except Exception:
+            logger.warning("Failed to save ALPR crop", exc_info=True)
+
+        self._last_ai_result = {
+            "plate": plate_number,
+            "raw_text": raw_text,
+            "confidence": confidence,
+            "ocr_confidence": ocr_confidence,
+            "evidence_path": evidence_path,
+        }
+        self.main_view.set_plate_detected(plate_number, confidence)
+
     def _save_frame(self, frame, suffix: str) -> str:
         evidence_dir = ensure_dir(Path(self.config.evidence_dir))
         filename = f"{now_ts()}_{suffix}.jpg"
@@ -317,13 +353,33 @@ class AppWindow(QtWidgets.QMainWindow):
             return
         self.main_view.set_plate_text(plate)
 
-        frame = self.camera_service.capture_current_frame()
-        evidence_path = None
-        if frame is not None:
-            evidence_path = self._save_frame(frame, suffix=plate.replace(" ", ""))
+        ai = self._last_ai_result
+
+        # Evidence: prefer the AI crop (already saved); fall back to live frame capture
+        evidence_path = ai["evidence_path"] if ai and ai.get("evidence_path") else None
+        if evidence_path is None:
+            frame = self.camera_service.capture_current_frame()
+            if frame is not None:
+                evidence_path = self._save_frame(frame, suffix=plate.replace(" ", ""))
+
+        # plate_number_raw: use the raw OCR text if AI ran, else the typed value
+        plate_number_raw = ai["raw_text"] if ai else plate_raw
+
+        # confidence: from AI pipeline if available
+        confidence = ai["ocr_confidence"] if ai else None
+
+        # decision_source: AUTO if AI detected the same plate the guard confirmed
+        if ai and self._normalize_plate(ai["plate"]) == plate:
+            decision_source = "AUTO"
+        else:
+            decision_source = "MANUAL"
 
         user_profile = self.device_repo.get_user_profile()
-        manual_by = user_profile.email if user_profile else None
+        manual_by_user_id = user_profile.uuid if user_profile else None
+        manual_by_username = user_profile.email if user_profile else None
+
+        # Look up the reason id from the local cache so it can be sent to the server
+        manual_reason_id = self.reason_repo.get_id_by_text(reason) if reason else None
 
         event_id = str(uuid.uuid4())
         ts = now_ts()
@@ -334,12 +390,14 @@ class AppWindow(QtWidgets.QMainWindow):
             lane_id=self.config.lane_id,
             device_id=self.device.device_id,
             direction=self.config.direction,
-            plate_number_raw=plate_raw,
+            plate_number_raw=plate_number_raw,
             plate_number_final=plate,
-            confidence=None,
+            confidence=confidence,
             decision=decision,
-            decision_source="MANUAL",
-            manual_by_username=manual_by,
+            decision_source=decision_source,
+            manual_by_user_id=manual_by_user_id,
+            manual_by_username=manual_by_username,
+            manual_reason_id=manual_reason_id,
             manual_reason=reason,
             manual_note=note,
             is_offline_event=not self.is_online,
@@ -354,44 +412,16 @@ class AppWindow(QtWidgets.QMainWindow):
             self._update_presence_hint(event.plate_number_final, event.direction)
         self._refresh_recent_events()
 
-        device = self.device_repo.get_device()
-        if device and device.access_token and self.is_online:
-            payload = {
-                "event_time": event.event_time,
-                "device_id": event.device_id,
-                "gate_id": event.gate_id,
-                "lane_id": event.lane_id,
-                "direction": event.direction,
-                "plate_number_raw": event.plate_number_raw,
-                "plate_number_final": event.plate_number_final,
-                "confidence": event.confidence,
-                "decision": event.decision,
-                "decision_source": event.decision_source,
-                "manual_by": event.manual_by_username,
-                "manual_reason": event.manual_reason,
-                "manual_note": event.manual_note,
-                "is_offline_event": event.is_offline_event,
-                "evidence_local_path": event.evidence_path,
-                "evidence_uploaded_url": None,
-            }
-            uploader = EventUploadWorker(self.api, device.access_token, event_id, payload)
-            uploader.upload_success.connect(self._on_event_uploaded)
-            uploader.upload_error.connect(self._on_event_upload_error)
-            uploader.finished.connect(lambda: self._cleanup_uploader(uploader))
-            self._uploaders.append(uploader)
-            uploader.start()
+        # Reset ALPR buffer for the next vehicle
+        self._last_ai_result = None
+        self.camera_service.reset_recognizer()
+        self.main_view.clear_plate_detected()
 
-    def _on_event_uploaded(self, event_id: str) -> None:
-        self.event_repo.mark_synced(event_id)
-        self._refresh_recent_events()
-
-    def _on_event_upload_error(self, event_id: str, error: str) -> None:
-        self.event_repo.increment_sync_attempt(event_id, error)
-        self._refresh_recent_events()
-
-    def _cleanup_uploader(self, uploader: EventUploadWorker) -> None:
-        if uploader in self._uploaders:
-            self._uploaders.remove(uploader)
+        # Trigger SyncWorker immediately — it owns all uploads (no double-submission risk)
+        if self.is_online:
+            if not self.sync_worker.isRunning():
+                self.sync_worker.start()
+            self.sync_worker.trigger_sync()
 
     def _handle_check_status(self) -> None:
         plate_raw, _, _ = self.main_view.get_manual_inputs()
@@ -452,8 +482,9 @@ class AppWindow(QtWidgets.QMainWindow):
             worker = RegisterVehicleWorker(self.api, self._get_token(), payload)
             worker.register_success.connect(self._on_temp_permit_success)
             worker.register_error.connect(self._on_temp_permit_error)
+            worker.finished.connect(lambda: self._cleanup_worker(self._temp_permit_workers, worker))
+            self._temp_permit_workers.append(worker)
             worker.start()
-            self._temp_permit_worker = worker
         else:
             if not reason or not note:
                 QtWidgets.QMessageBox.warning(
@@ -469,9 +500,10 @@ class AppWindow(QtWidgets.QMainWindow):
         plate = vehicle.get("plate_number")
         status = vehicle.get("status", "ALLOWED")
         valid_to = vehicle.get("valid_to")
+        owner_name = vehicle.get("owner_name")
         if plate:
             self.allow_repo.upsert_items([
-                (plate, status, valid_to, now_ts(), now_ts()),
+                (plate, status, valid_to, owner_name, now_ts(), now_ts()),
             ])
             self.main_view.set_status_result(f"{status}{self._format_valid_to(valid_to)}")
             self.main_view.enable_not_found_actions(False)
@@ -485,16 +517,18 @@ class AppWindow(QtWidgets.QMainWindow):
         worker.lookup_success.connect(self._on_lookup_success)
         worker.lookup_not_found.connect(self._on_lookup_not_found)
         worker.lookup_error.connect(self._on_lookup_error)
+        worker.finished.connect(lambda: self._cleanup_worker(self._lookup_workers, worker))
+        self._lookup_workers.append(worker)
         worker.start()
-        self._lookup_worker = worker
 
     def _on_lookup_success(self, data: dict) -> None:
         plate = data.get("plate_number", "")
         status = data.get("status", "UNKNOWN")
         valid_to = data.get("valid_to")
+        owner_name = data.get("owner_name")
         if plate:
             self.allow_repo.upsert_items([
-                (plate, status, valid_to, now_ts(), now_ts()),
+                (plate, status, valid_to, owner_name, now_ts(), now_ts()),
             ])
         self.main_view.set_status_result(f"{status}{self._format_valid_to(valid_to)}")
         self.main_view.enable_not_found_actions(False)
@@ -511,7 +545,9 @@ class AppWindow(QtWidgets.QMainWindow):
         event_id = str(uuid.uuid4())
         ts = now_ts()
         user_profile = self.device_repo.get_user_profile()
-        manual_by = user_profile.email if user_profile else None
+        manual_by_user_id = user_profile.uuid if user_profile else None
+        manual_by_username = user_profile.email if user_profile else None
+        manual_reason_id = self.reason_repo.get_id_by_text(reason) if reason else None
         event = EventRecord(
             id=event_id,
             event_time=ts,
@@ -524,7 +560,9 @@ class AppWindow(QtWidgets.QMainWindow):
             confidence=None,
             decision="ALLOW",
             decision_source="MANUAL",
-            manual_by_username=manual_by,
+            manual_by_user_id=manual_by_user_id,
+            manual_by_username=manual_by_username,
+            manual_reason_id=manual_reason_id,
             manual_reason=reason,
             manual_note=note,
             is_offline_event=True,
@@ -546,6 +584,11 @@ class AppWindow(QtWidgets.QMainWindow):
     def _update_presence_hint(self, plate_number: str, direction: str) -> None:
         state = "INSIDE" if direction == "ENTRY" else "OUTSIDE"
         self.presence_repo.upsert_presence(plate_number, state, now_ts())
+
+    def _cleanup_worker(self, worker_list: list, worker) -> None:
+        """Remove a finished worker from its tracking list."""
+        if worker in worker_list:
+            worker_list.remove(worker)
 
     def _has_token(self) -> bool:
         device = self.device_repo.get_device()
@@ -577,6 +620,7 @@ class AppWindow(QtWidgets.QMainWindow):
         )
         self.camera_service.frame_ready.connect(self.main_view.update_frame)
         self.camera_service.status_changed.connect(self.main_view.set_camera_status)
+        self.camera_service.plate_detected.connect(self._on_plate_detected)
         self.camera_service.start()
 
 
@@ -599,6 +643,30 @@ class AppWindow(QtWidgets.QMainWindow):
 
     def _handle_settings_cancelled(self) -> None:
         self.stack.setCurrentWidget(self.main_view)
+
+    def _handle_auth_required(self) -> None:
+        """Called when SyncWorker's token refresh fails — session expired, re-login needed."""
+        logger.warning("Session expired — forcing re-login")
+        self.device_repo.clear_session()
+        self.is_online = False
+        self.main_view.set_online_status(False)
+        self.main_view.set_user("-")
+        self.main_view.set_sync_status("Session expired")
+        self.next_sync_at = None
+        self._update_next_sync_label()
+        if self.sync_worker.isRunning():
+            self.sync_worker.stop()
+            self.sync_worker.wait(2000)
+        self.sync_worker = self._create_sync_worker()
+        self._connect_sync_signals()
+        self.camera_service.stop()
+        self.stack.setCurrentWidget(self.login_view)
+        self.login_view.set_status("Session expired — please sign in again.")
+        QtWidgets.QMessageBox.warning(
+            self,
+            "Session Expired",
+            "Your session has expired. Please sign in again.",
+        )
 
     def _handle_logout(self) -> None:
         self.device_repo.clear_session()
@@ -648,7 +716,16 @@ def main() -> None:
     setup_logging()
     config = load_config()
 
+    # Force XCB (X11) backend on Linux — avoids Wayland/EGL failures that
+    # break window management (move, resize) and camera rendering.
+    import os
+    if os.name != "nt":  # Linux / macOS
+        os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+
     app = QtWidgets.QApplication([])
+    # Fusion style gives consistent cross-platform widget rendering so that
+    # QSS background-color on buttons works correctly on all Linux distros.
+    app.setStyle("Fusion")
 
     # ── Load Poppins font if bundled, otherwise fall back to system ──
     _fonts_dir = Path(__file__).resolve().parent / "assets" / "fonts"

@@ -407,21 +407,6 @@ QFrame#LoginCard QLabel#LoginSubtitle {{
     font-size: {FONT_SIZE_BASE};
     color: {TEXT_MUTED};
 }}
-QFrame#LoginCard QPushButton#LoginBtn {{
-    background-color: {ORANGE};
-    color: {WHITE};
-    border: none;
-    font-weight: 600;
-    font-size: {FONT_SIZE_LARGE};
-    padding: 10px 0;
-    border-radius: {RADIUS};
-}}
-QFrame#LoginCard QPushButton#LoginBtn:hover {{
-    background-color: {ORANGE_ALT};
-}}
-QFrame#LoginCard QPushButton#LoginBtn:pressed {{
-    background-color: #D94D1F;
-}}
 QFrame#LoginCard QLineEdit {{
     padding: 10px 12px;
     font-size: {FONT_SIZE_BASE};
@@ -433,6 +418,45 @@ QFrame#SettingsCard {{
     border: 1px solid {BORDER};
     border-radius: {RADIUS_LARGE};
     padding: 24px;
+}}
+
+/* Ensure primary/action buttons always render with correct colours
+   regardless of platform style or parent background. */
+QPushButton#PrimaryBtn {{
+    background-color: {ORANGE};
+    color: {WHITE};
+    border: none;
+    font-weight: 600;
+}}
+QPushButton#PrimaryBtn:hover {{
+    background-color: {ORANGE_ALT};
+    color: {WHITE};
+}}
+QPushButton#PrimaryBtn:pressed {{
+    background-color: #D94D1F;
+    color: {WHITE};
+}}
+QPushButton#PrimaryBtn:disabled {{
+    background-color: #C0B0A8;
+    color: #E0D8D4;
+}}
+
+QPushButton#LoginBtn {{
+    background-color: {ORANGE};
+    color: {WHITE};
+    border: none;
+    font-weight: 600;
+    font-size: {FONT_SIZE_LARGE};
+    padding: 10px 0;
+    border-radius: {RADIUS};
+}}
+QPushButton#LoginBtn:hover {{
+    background-color: {ORANGE_ALT};
+    color: {WHITE};
+}}
+QPushButton#LoginBtn:pressed {{
+    background-color: #D94D1F;
+    color: {WHITE};
 }}
 """
 

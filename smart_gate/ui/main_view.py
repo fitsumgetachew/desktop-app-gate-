@@ -8,6 +8,7 @@ from smart_gate.ui.theme import (
     get_logo_path,
     DAINTREE,
     HALF_BAKED,
+    ORANGE,
     SUCCESS,
     DANGER,
     TEXT_MUTED,
@@ -71,7 +72,7 @@ class MainGateView(QtWidgets.QWidget):
         layout.setSpacing(12)
 
         # ── Left group: logo + title ─────────────────────────────
-        logo_path = get_logo_path("light")
+        logo_path = get_logo_path("dark")  # header bar is dark background → secondary color logo
         self._logo_label = QtWidgets.QLabel()
         if logo_path:
             px = QtGui.QPixmap(logo_path)
@@ -214,6 +215,9 @@ class MainGateView(QtWidgets.QWidget):
 
         self.check_online_checkbox = QtWidgets.QCheckBox("Check online too")
 
+        self.ai_confidence_label = QtWidgets.QLabel("")
+        self.ai_confidence_label.setStyleSheet(f"font-size: 11px; color: {TEXT_MUTED};")
+
         self.status_result_label = QtWidgets.QLabel("Status: -")
         self.status_result_label.setStyleSheet("font-weight: 600;")
         self.presence_hint_label = QtWidgets.QLabel("Last state: -")
@@ -232,6 +236,7 @@ class MainGateView(QtWidgets.QWidget):
         plate_grid.addWidget(self.plate_input, 0, 1, 1, 2)
         plate_grid.addWidget(self.check_status_button, 0, 3)
         # Row 1
+        plate_grid.addWidget(self.ai_confidence_label, 1, 0)
         plate_grid.addWidget(self.check_online_checkbox, 1, 1)
         plate_grid.addWidget(self.status_result_label, 1, 2, 1, 2)
         # Row 2
@@ -433,6 +438,24 @@ class MainGateView(QtWidgets.QWidget):
 
     def set_plate_text(self, plate: str) -> None:
         self.plate_input.setText(plate)
+
+    def set_plate_detected(self, plate: str, confidence: float) -> None:
+        """Prefill the plate field with AI result and show colour-coded confidence."""
+        self.plate_input.setText(plate)
+        pct = int(confidence * 100)
+        if confidence >= 0.85:
+            color = SUCCESS
+        elif confidence >= 0.60:
+            color = ORANGE
+        else:
+            color = DANGER
+        self.ai_confidence_label.setText(f"AI: {pct}%")
+        self.ai_confidence_label.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {color};")
+
+    def clear_plate_detected(self) -> None:
+        """Remove the AI confidence indicator (after a decision is submitted)."""
+        self.ai_confidence_label.setText("")
+        self.ai_confidence_label.setStyleSheet(f"font-size: 11px; color: {TEXT_MUTED};")
 
     def is_check_online(self) -> bool:
         return self.check_online_checkbox.isChecked()

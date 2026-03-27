@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from smart_gate.ui.theme import get_logo_path, DAINTREE, LIGHT_BLUE
+from smart_gate.ui.theme import get_logo_path, DAINTREE, LIGHT_BLUE, ORANGE, ORANGE_ALT, WHITE
 
 
 class LoginView(QtWidgets.QWidget):
@@ -24,7 +24,7 @@ class LoginView(QtWidgets.QWidget):
         card_layout.setSpacing(16)
 
         # Logo / fallback text
-        logo_path = get_logo_path("dark")
+        logo_path = get_logo_path("light")  # white card background → primary color logo
         self.logo_label = QtWidgets.QLabel()
         self.logo_label.setAlignment(QtCore.Qt.AlignCenter)
         if logo_path:
@@ -79,6 +79,12 @@ class LoginView(QtWidgets.QWidget):
         self.login_button.setObjectName("LoginBtn")
         self.login_button.setMinimumHeight(42)
         self.login_button.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+        self.login_button.setStyleSheet(
+            f"QPushButton {{ background-color: {ORANGE}; color: {WHITE}; border: none;"
+            f" font-weight: 600; font-size: 15px; border-radius: 6px; padding: 10px 0; }}"
+            f"QPushButton:hover {{ background-color: {ORANGE_ALT}; }}"
+            f"QPushButton:pressed {{ background-color: #D94D1F; }}"
+        )
         card_layout.addWidget(self.login_button)
 
         # Status

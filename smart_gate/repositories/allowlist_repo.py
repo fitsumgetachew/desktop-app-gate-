@@ -14,14 +14,22 @@ class AllowlistRepository:
             return None
         return int(row["v"])
 
-    def upsert_items(self, items: Iterable[Tuple[str, str, Optional[int], int, int]]) -> None:
+    def upsert_items(
+        self,
+        items: Iterable[Tuple[str, str, Optional[int], Optional[str], int, int]],
+    ) -> None:
+        """
+        Each tuple: (plate_number, status, valid_to, owner_name, updated_at, version)
+        owner_name may be None.
+        """
         self.conn.executemany(
             """
-            INSERT INTO cache_allowlist (plate_number, status, valid_to, updated_at, version)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO cache_allowlist (plate_number, status, valid_to, owner_name, updated_at, version)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(plate_number) DO UPDATE SET
                 status=excluded.status,
                 valid_to=excluded.valid_to,
+                owner_name=excluded.owner_name,
                 updated_at=excluded.updated_at,
                 version=excluded.version
             """,

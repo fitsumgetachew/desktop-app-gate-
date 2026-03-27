@@ -20,6 +20,27 @@ class Database:
         return conn
 
 
+def _migrate_db(conn: sqlite3.Connection) -> None:
+    """Apply additive schema migrations for existing databases."""
+    migrations = [
+        "ALTER TABLE local_device_config ADD COLUMN refresh_token TEXT",
+        "ALTER TABLE local_user_profile ADD COLUMN uuid TEXT",
+        "ALTER TABLE cache_allowlist ADD COLUMN owner_name TEXT",
+        "ALTER TABLE event_queue ADD COLUMN manual_by_user_id TEXT",
+        "ALTER TABLE event_queue ADD COLUMN manual_reason_id INTEGER",
+        # Evidence upload tracking
+        "ALTER TABLE event_queue ADD COLUMN evidence_upload_status TEXT",
+        "ALTER TABLE event_queue ADD COLUMN evidence_uploaded_url TEXT",
+        "ALTER TABLE event_queue ADD COLUMN evidence_upload_attempts INTEGER DEFAULT 0",
+    ]
+    for sql in migrations:
+        try:
+            conn.execute(sql)
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists — safe to ignore
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     cursor = conn.cursor()
     cursor.execute(
@@ -53,6 +74,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             plate_number TEXT PRIMARY KEY,
             status TEXT,
             valid_to INTEGER,
+            owner_name TEXT,
             updated_at INTEGER,
             version INTEGER
         )
@@ -82,11 +104,16 @@ def init_db(conn: sqlite3.Connection) -> None:
             confidence REAL,
             decision TEXT,
             decision_source TEXT,
+            manual_by_user_id TEXT,
             manual_by_username TEXT,
+            manual_reason_id INTEGER,
             manual_reason TEXT,
             manual_note TEXT,
             is_offline_event INTEGER,
             evidence_path TEXT,
+            evidence_upload_status TEXT,
+            evidence_uploaded_url TEXT,
+            evidence_upload_attempts INTEGER DEFAULT 0,
             synced INTEGER,
             sync_attempts INTEGER,
             last_sync_error TEXT,
@@ -104,3 +131,4 @@ def init_db(conn: sqlite3.Connection) -> None:
         """
     )
     conn.commit()
+    _migrate_db(conn)

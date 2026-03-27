@@ -22,8 +22,8 @@ def test_allowlist_upsert(tmp_path: Path):
     repo = AllowlistRepository(conn)
 
     repo.upsert_items([
-        ("ABC-123", "ALLOWED", None, 1700000000, 1700000001),
-        ("BLK-1", "BLACKLISTED", None, 1700000000, 1700000001),
+        ("ABC-123", "ALLOWED", None, None, 1700000000, 1700000001),
+        ("BLK-1", "BLACKLISTED", None, None, 1700000000, 1700000001),
     ])
 
     assert repo.get_plate_status("ABC-123") == "ALLOWED"
@@ -47,7 +47,9 @@ def test_event_queue_add_and_sync(tmp_path: Path):
         confidence=None,
         decision="ALLOW",
         decision_source="MANUAL",
+        manual_by_user_id=None,
         manual_by_username="guard",
+        manual_reason_id=None,
         manual_reason="Manual override",
         manual_note="",
         is_offline_event=True,

@@ -34,6 +34,7 @@ class DeviceService:
                 lane_id=lane_id,
                 mac_address=existing.mac_address,
                 access_token=existing.access_token,
+                refresh_token=existing.refresh_token,  # preserve existing token
             )
             self.repo.upsert_device(updated)
             return updated
@@ -62,5 +63,6 @@ class DeviceService:
             "mac_address": device.mac_address,
             "gate_id": device.gate_id,
             "lane_id": device.lane_id,
+            # gate_name / lane_name are optional display labels per API contract
         }
         self.api.register_device(token, payload)

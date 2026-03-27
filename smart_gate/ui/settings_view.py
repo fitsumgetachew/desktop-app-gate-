@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from smart_gate.ui.theme import DAINTREE, LIGHT_BLUE, ORANGE, WHITE
+from smart_gate.ui.theme import DAINTREE, LIGHT_BLUE, ORANGE, ORANGE_ALT, WHITE
 from smart_gate.utils.config import AppConfig, save_config
 
 
@@ -126,6 +126,13 @@ class SettingsPage(QtWidgets.QWidget):
         self.save_button.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         self.save_button.setMinimumWidth(140)
         self.save_button.setMinimumHeight(38)
+        # Inline style has highest specificity — overrides any platform theme
+        self.save_button.setStyleSheet(
+            f"QPushButton {{ background-color: {ORANGE}; color: {WHITE}; border: none;"
+            f" font-weight: 600; border-radius: 6px; padding: 8px 18px; }}"
+            f"QPushButton:hover {{ background-color: {ORANGE_ALT}; }}"
+            f"QPushButton:pressed {{ background-color: #D94D1F; }}"
+        )
 
         btn_layout.addWidget(self.cancel_button)
         btn_layout.addWidget(self.save_button)
