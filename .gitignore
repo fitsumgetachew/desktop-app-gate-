@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Build / packaging artefacts
+build/
+dist/
+*.spec.bak
+__pycache__/
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime data
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Evidence captures (runtime output — do not commit)
+evidence/
