@@ -1,0 +1,28 @@
+{
+  "version": "1031",
+  "items": [
+    {
+      "staff_uid": "stf-0001",
+      "full_name": "Abebe Bekele",
+      "photos": [
+        {"position": 1, "hash": "3f786850e387550fdab836ed7e6dc881de23001b", "url": "https://storage.example/sit/stf-0001/1.jpg?sig=zzz"},
+        {"position": 2, "hash": "1b6453892473a467d07372d45eb05abc2031647a", "url": "https://storage.example/sit/stf-0001/2.jpg?sig=yyy"},
+        {"position": 3, "hash": "0a0a9f2a6772942557ab5355d76af442f8f65e01", "url": "https://storage.example/sit/stf-0001/3.jpg?sig=xxx"},
+        {"position": 4, "hash": "e9d71f5ee7c92d6dc9e92ffdad17b8bd49418f98", "url": "https://storage.example/sit/stf-0001/4.jpg?sig=www"},
+        {"position": 5, "hash": "b6589fc6ab0dc82cf12099d1c2d40ab994e8410c", "url": "https://storage.example/sit/stf-0001/5.jpg?sig=vvv"}
+      ],
+      "plates": ["AA12345"],
+      "updated_at": 1766003000
+    },
+    {
+      "staff_uid": "stf-0004",
+      "full_name": "Hanna Girma",
+      "photos": [
+        {"position": 1, "hash": "ac3478d69a3c81fa62e60f5c3696165a4e5e6ac4", "url": "https://storage.example/sit/stf-0004/1.jpg?sig=uuu"}
+      ],
+      "plates": ["CC10101"],
+      "updated_at": 1766003100
+    }
+  ],
+  "deleted": ["stf-0003"]
+}

@@ -1,0 +1,38 @@
+{
+  "version": "1024",
+  "items": [
+    {
+      "staff_uid": "stf-0001",
+      "full_name": "Abebe Bekele",
+      "photos": [
+        {"position": 1, "hash": "3f786850e387550fdab836ed7e6dc881de23001b", "url": "https://storage.example/sit/stf-0001/1.jpg?sig=aaa"},
+        {"position": 2, "hash": "89e6c98d92887913cadf06b2adb97f26cde4849b", "url": "https://storage.example/sit/stf-0001/2.jpg?sig=bbb"},
+        {"position": 3, "hash": "0a0a9f2a6772942557ab5355d76af442f8f65e01", "url": "https://storage.example/sit/stf-0001/3.jpg?sig=ccc"},
+        {"position": 4, "hash": "e9d71f5ee7c92d6dc9e92ffdad17b8bd49418f98", "url": "https://storage.example/sit/stf-0001/4.jpg?sig=ddd"},
+        {"position": 5, "hash": "b6589fc6ab0dc82cf12099d1c2d40ab994e8410c", "url": "https://storage.example/sit/stf-0001/5.jpg?sig=eee"}
+      ],
+      "plates": ["AA12345", "AA54321"],
+      "updated_at": 1766000000
+    },
+    {
+      "staff_uid": "stf-0002",
+      "full_name": "Sara Tesfaye",
+      "photos": [
+        {"position": 1, "hash": "356a192b7913b04c54574d18c28d46e6395428ab", "url": "https://storage.example/sit/stf-0002/1.jpg?sig=fff"},
+        {"position": 2, "hash": "da4b9237bacccdf19c0760cab7aec4a8359010b0", "url": "https://storage.example/sit/stf-0002/2.jpg?sig=ggg"}
+      ],
+      "plates": ["BB99887"],
+      "updated_at": 1766000100
+    },
+    {
+      "staff_uid": "stf-0003",
+      "full_name": "Mulugeta Haile",
+      "photos": [
+        {"position": 1, "hash": "77de68daecd823babbb58edb1c8e14d7106e83bb", "url": "https://storage.example/sit/stf-0003/1.jpg?sig=hhh"}
+      ],
+      "plates": [],
+      "updated_at": 1766000200
+    }
+  ],
+  "deleted": []
+}

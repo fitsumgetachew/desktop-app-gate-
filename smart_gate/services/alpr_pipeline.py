@@ -44,6 +44,8 @@ from typing import Optional, Tuple
 import cv2
 import numpy as np
 
+from smart_gate.utils.plates import normalize_plate
+
 logger = logging.getLogger(__name__)
 
 
@@ -68,14 +70,20 @@ class PlateRecognizerConfig:
 
     # Temporal aggregation
     frame_buffer_size: int = 7
-    min_votes_for_commit: int = 3   # How many matching frames before committing
+    min_votes_for_commit: int = 3   # How many agreeing frames before committing
+    # Below this mean per-character agreement the buffered reads disagree too
+    # much to merge — see _consensus. 0.6 keeps a one-glyph wobble across a
+    # normal buffer while rejecting a genuinely unstable read.
+    min_char_agreement: float = 0.6
 
     # Preprocessing
     clahe_clip_limit: float = 2.5
     clahe_tile_size: Tuple[int, int] = (8, 8)
 
     # Plate filter (Phase 2: change regex to match Ethiopian plate format)
-    min_plate_length: int = 2
+    # 5 is the shortest real plate we accept — below that OCR fragments
+    # ("AB", "12") would be committed as if they were plates.
+    min_plate_length: int = 5
     max_plate_length: int = 12
 
 
@@ -174,6 +182,8 @@ class PlateRecognizer:
 
         boxes = self._decode_detections(outputs, w, h, scale_x, scale_y, pad_x, pad_y)
 
+        # No plate in frame → return before the OCR stage. OCR is by far the most
+        # expensive step, so this early exit is what keeps an idle gate cheap.
         if not boxes:
             return None
 
@@ -205,14 +215,14 @@ class PlateRecognizer:
             self._best_ocr_conf = ocr_conf
             self._best_raw_text = raw_text
 
-        # Step 8 — Commit if enough votes
+        # Step 8 — Commit once the buffered reads agree, character by character
         if len(self._plate_buffer) >= self._config.min_votes_for_commit:
-            counter = Counter(self._plate_buffer)
-            top_plate, votes = counter.most_common(1)[0]
-            if votes >= self._config.min_votes_for_commit:
+            consensus = self._consensus(list(self._plate_buffer))
+            if consensus is not None:
+                top_plate, agreement = consensus
                 result = PipelineResult(
                     plate_number=top_plate,
-                    confidence=round(votes / len(self._plate_buffer), 3),
+                    confidence=round(agreement, 3),
                     raw_text=self._best_raw_text,
                     ocr_confidence=round(self._best_ocr_conf, 3),
                     bbox=self._best_bbox or (x1, y1, x2, y2),
@@ -223,6 +233,46 @@ class PlateRecognizer:
                 return result
 
         return None
+
+    def _consensus(self, reads: list) -> Optional[Tuple[str, float]]:
+        """Merge the buffered reads into one plate by per-position majority.
+
+        Requiring N *identical* strings is what loses plates in the real world:
+        OCR rarely fails a whole plate, it wobbles one glyph — a 5 read as an S
+        in one frame out of six. Demanding exact agreement throws away five good
+        frames because of one bad character, and the vehicle reads as unknown.
+
+        Voting per character position instead keeps the five and outvotes the
+        wobble, which is strictly more information than the old exact match used
+        (identical reads still produce the same answer at agreement 1.0). Reads
+        of different lengths are different readings, not disagreements about one
+        glyph, so the most-supported length wins first and only reads of that
+        length vote on characters.
+        """
+        if not reads:
+            return None
+        # Group by length first — "AA1234" and "AA12345" are not two opinions
+        # about the same 7 characters.
+        length_counter = Counter(len(read) for read in reads)
+        best_length, _ = length_counter.most_common(1)[0]
+        candidates = [read for read in reads if len(read) == best_length]
+        if len(candidates) < self._config.min_votes_for_commit:
+            return None
+
+        chars = []
+        agreements = []
+        for position in range(best_length):
+            column = Counter(read[position] for read in candidates)
+            char, votes = column.most_common(1)[0]
+            chars.append(char)
+            agreements.append(votes / len(candidates))
+
+        agreement = sum(agreements) / len(agreements)
+        if agreement < self._config.min_char_agreement:
+            # The buffer is genuinely chaotic rather than wobbling on one glyph;
+            # committing here would invent a plate no frame actually saw.
+            return None
+        return "".join(chars), agreement
 
     def reset(self) -> None:
         """Clear the frame buffer. Call when a vehicle leaves the gate."""
@@ -409,14 +459,12 @@ class PlateRecognizer:
             return None, 0.0
 
     def _normalize(self, raw: str) -> str:
-        """Normalize raw OCR text to clean plate string."""
-        if not raw:
-            return ""
-        # Keep alphanumeric, uppercase
-        text = "".join(c.upper() for c in raw if c.isalnum())
-        # Phase 1: numbers only. Remove this filter in Phase 2.
-        # text = "".join(c for c in text if c.isdigit())
-        return text
+        """Normalize raw OCR text to the app-wide canonical plate form.
+
+        Delegates to ``smart_gate.utils.plates.normalize_plate`` so the pipeline
+        emits exactly the form the allowlist cache and the server store.
+        """
+        return normalize_plate(raw)
 
     def _validate(self, text: str) -> bool:
         """Check plate text meets minimum quality bar."""

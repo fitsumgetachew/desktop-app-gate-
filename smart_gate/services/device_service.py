@@ -39,7 +39,9 @@ class DeviceService:
             self.repo.upsert_device(updated)
             return updated
 
-        device_id = str(uuid.uuid4())
+        # Lowercase everywhere: this id is transcribed into the portal by hand,
+        # and one spelling is easier to match (and to eyeball) than two.
+        device_id = str(uuid.uuid4()).lower()
         node = uuid.getnode()
         mac_address = _format_mac(node)
         if not device_name:

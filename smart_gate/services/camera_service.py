@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Optional
 
@@ -10,6 +11,28 @@ from PySide6 import QtCore, QtGui
 from smart_gate.utils.paths import get_detector_model_path
 
 logger = logging.getLogger(__name__)
+
+
+# The detector + OCR cost far more than a frame interval, so running them on
+# every frame starves the preview. 5 analyses/second is ample for a vehicle
+# rolling up to a barrier, and the preview keeps streaming at full rate.
+ALPR_MAX_FPS = 5.0
+ALPR_MIN_INTERVAL = 1.0 / ALPR_MAX_FPS
+
+# FFmpeg options for RTSP capture (Hikvision & co.): interleaved TCP instead
+# of UDP — UDP drops packets on long cable runs / busy switches and produces
+# smeared, half-decoded frames that poison the ALPR pipeline.
+_RTSP_FFMPEG_OPTIONS = "rtsp_transport;tcp"
+
+# Fail fast on a powered-off/unreachable camera instead of OpenCV's 30 s
+# default. Enforced by OpenCV's interrupt callback, which works regardless of
+# the FFmpeg build's RTSP option names.
+_RTSP_OPEN_TIMEOUT_MS = 6000
+_RTSP_READ_TIMEOUT_MS = 6000
+
+# Reconnect backoff bounds (seconds) when a stream drops or fails to open.
+_RECONNECT_MIN_WAIT = 1.0
+_RECONNECT_MAX_WAIT = 15.0
 
 
 class CameraWorker(QtCore.QThread):
@@ -26,6 +49,7 @@ class CameraWorker(QtCore.QThread):
         self._stop_flag = False
         self._last_frame = None
         self._recognizer = None
+        self._last_alpr_ts = 0.0
 
     def stop(self) -> None:
         self._stop_flag = True
@@ -41,13 +65,18 @@ class CameraWorker(QtCore.QThread):
     def run(self) -> None:
         self._stop_flag = False  # reset on each start so re-login works
         self._recognizer = self._create_recognizer()
+        reconnect_wait = _RECONNECT_MIN_WAIT
 
         while not self._stop_flag:
             cap = self._open_capture()
             if not cap:
-                self.status_changed.emit(False, "Camera open failed")
-                time.sleep(2)
+                self.status_changed.emit(
+                    False, f"Camera open failed — retrying in {reconnect_wait:.0f}s"
+                )
+                time.sleep(reconnect_wait)
+                reconnect_wait = min(reconnect_wait * 2, _RECONNECT_MAX_WAIT)
                 continue
+            reconnect_wait = _RECONNECT_MIN_WAIT
 
             # Warm up models once after camera opens, before the frame loop
             if self._recognizer is not None:
@@ -66,8 +95,14 @@ class CameraWorker(QtCore.QThread):
                     break
                 self._last_frame = frame
 
-                # Run ALPR pipeline on every frame
-                if self._recognizer is not None:
+                # Run the ALPR pipeline at ALPR_MAX_FPS, skipping frames by
+                # timestamp; the preview below still gets every frame.
+                now = time.monotonic()
+                if (
+                    self._recognizer is not None
+                    and (now - self._last_alpr_ts) >= ALPR_MIN_INTERVAL
+                ):
+                    self._last_alpr_ts = now
                     try:
                         result = self._recognizer.process_frame(frame)
                         if result is not None:
@@ -84,7 +119,12 @@ class CameraWorker(QtCore.QThread):
                 image = self._to_qimage(frame)
                 if image is not None:
                     self.frame_ready.emit(image)
-                time.sleep(0.03)
+                # USB capture returns instantly, so pace the loop manually.
+                # RTSP reads block until the next frame arrives — sleeping on
+                # top of that lets frames queue in FFmpeg's buffer and the
+                # ALPR ends up analyzing seconds-old video.
+                if not self._is_rtsp():
+                    time.sleep(0.03)
             cap.release()
             time.sleep(1)
 
@@ -100,11 +140,27 @@ class CameraWorker(QtCore.QThread):
             logger.warning("ALPR pipeline not available — camera running without plate recognition", exc_info=True)
             return None
 
+    def _is_rtsp(self) -> bool:
+        return self.mode.upper() == "RTSP"
+
     def _open_capture(self) -> Optional[cv2.VideoCapture]:
-        if self.mode.upper() == "RTSP":
+        if self._is_rtsp():
             if not self.rtsp_url:
                 return None
-            cap = cv2.VideoCapture(self.rtsp_url)
+            # Must be set before VideoCapture is created — OpenCV reads it once
+            # when the FFmpeg backend opens the stream.
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = _RTSP_FFMPEG_OPTIONS
+            cap = cv2.VideoCapture(
+                self.rtsp_url,
+                cv2.CAP_FFMPEG,
+                [
+                    cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, _RTSP_OPEN_TIMEOUT_MS,
+                    cv2.CAP_PROP_READ_TIMEOUT_MSEC, _RTSP_READ_TIMEOUT_MS,
+                ],
+            )
+            # Keep at most one frame buffered so reads always return the most
+            # recent frame (low latency matters more than smoothness here).
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         else:
             cap = cv2.VideoCapture(self.index)
         if not cap.isOpened():

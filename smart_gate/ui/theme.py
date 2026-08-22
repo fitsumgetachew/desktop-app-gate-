@@ -7,6 +7,26 @@ once on the QApplication (or per-widget) to get consistent styling.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+_ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+
+
+def _asset_url(name: str) -> str:
+    """Absolute asset path in the forward-slash form Qt stylesheets expect.
+
+    Qt's stylesheet parser wants ``/`` even on Windows, so ``as_posix`` rather
+    than ``str``.
+    """
+    return _ASSETS_DIR.joinpath(name).as_posix()
+
+
+# Dropdown and spin-box arrows. Drawn from SVG rather than with the CSS
+# border-triangle trick, which Qt renders as a filled rectangle — two dark
+# blocks on every spin box. A missing file degrades to no arrow, not a block.
+CHEVRON_DOWN = _asset_url("chevron_down.svg")
+CHEVRON_UP = _asset_url("chevron_up.svg")
+
 # ---------------------------------------------------------------------------
 # SIT colour palette
 # ---------------------------------------------------------------------------
@@ -28,6 +48,25 @@ TEXT_SECONDARY = "#4A6A70"
 TEXT_MUTED = "#6B8E93"
 DANGER = "#D9534F"
 SUCCESS = "#3DAA6D"
+
+# ---------------------------------------------------------------------------
+# Traffic-light decision states
+# ---------------------------------------------------------------------------
+# The three states the camera view can be driven into when the ALPR commits a
+# plate. Each has a saturated border/banner colour (read at a glance from
+# several metres away, in daylight) and a soft tint for detail panels.
+# Derived from the palette above so the gate view still reads as SIT:
+# green from SUCCESS, red from DANGER, orange from the SIT accent ORANGE.
+
+STATE_GREEN = "#2E8B57"        # deeper SUCCESS — passes contrast on white text
+STATE_GREEN_SOFT = "#E4F3EA"
+STATE_RED = "#C62828"          # deeper DANGER — unmistakably an alarm
+STATE_RED_SOFT = "#FBE6E5"
+STATE_ORANGE = ORANGE          # SIT primary accent
+STATE_ORANGE_SOFT = "#FFEDE5"
+
+# Thickness of the border drawn around the live video feed per state.
+STATE_BORDER_WIDTH = "6px"
 
 # ---------------------------------------------------------------------------
 # Font stack
@@ -172,7 +211,11 @@ QLineEdit:disabled {{
     color: {TEXT_MUTED};
 }}
 
-QSpinBox {{
+/* QSpinBox does NOT match QDoubleSpinBox — they are siblings, not parent and
+   child — so both are named. And a spin box with a styled border loses the
+   native rendering of its arrows: unstyled sub-controls then fall back to a
+   dark default that reads as two black blocks. */
+QSpinBox, QDoubleSpinBox {{
     border: 1px solid {BORDER};
     border-radius: {RADIUS};
     padding: 6px 10px;
@@ -180,8 +223,24 @@ QSpinBox {{
     font-size: {FONT_SIZE_BASE};
     color: {TEXT_PRIMARY};
 }}
-QSpinBox:focus {{
+QSpinBox:focus, QDoubleSpinBox:focus {{
     border-color: {ORANGE};
+}}
+QSpinBox::up-button, QDoubleSpinBox::up-button,
+QSpinBox::down-button, QDoubleSpinBox::down-button {{
+    background-color: transparent;
+    border: none;
+    width: 18px;
+}}
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+    image: url({CHEVRON_UP});
+    width: 10px;
+    height: 6px;
+}}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+    image: url({CHEVRON_DOWN});
+    width: 10px;
+    height: 6px;
 }}
 
 QComboBox {{
@@ -198,6 +257,14 @@ QComboBox:focus {{
 QComboBox::drop-down {{
     border: none;
     width: 24px;
+}}
+/* Without this the arrow is the unstyled default and the field does not read
+   as a dropdown at all. */
+QComboBox::down-arrow {{
+    image: url({CHEVRON_DOWN});
+    width: 10px;
+    height: 6px;
+    margin-right: 8px;
 }}
 QComboBox QAbstractItemView {{
     background-color: {WHITE};
@@ -221,6 +288,22 @@ QCheckBox::indicator {{
 QCheckBox::indicator:checked {{
     background-color: {ORANGE};
     border-color: {ORANGE};
+}}
+
+/* Small square actions (the camera list's remove button). Unstyled these
+   render as solid dark blocks against the light card. */
+QToolButton {{
+    border: 1px solid {BORDER};
+    border-radius: {RADIUS_SMALL};
+    background-color: {WHITE};
+    color: {TEXT_SECONDARY};
+    font-size: {FONT_SIZE_BASE};
+    font-weight: 700;
+}}
+QToolButton:hover {{
+    background-color: {STATE_RED_SOFT};
+    border-color: {DANGER};
+    color: {DANGER};
 }}
 
 /* ── Buttons ──────────────────────────────────────────────────── */
