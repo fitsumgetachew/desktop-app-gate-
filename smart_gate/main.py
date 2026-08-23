@@ -61,6 +61,7 @@ from smart_gate.ui.theme import SIT_STYLESHEET
 from smart_gate.utils.logging import setup_logging
 from smart_gate.utils.paths import ensure_dir
 from smart_gate.utils.plates import normalize_plate
+from smart_gate.utils.roi import parse_read_zone
 from smart_gate.utils.time import now_ts
 
 logger = logging.getLogger(__name__)
@@ -409,6 +410,7 @@ class AppWindow(QtWidgets.QMainWindow):
             mode=config.camera_mode,
             index=config.camera_index,
             rtsp_url=config.camera_rtsp_url,
+            read_zone=parse_read_zone(config.alpr_roi),
         )
 
         # ── Staff attendance ─────────────────────────────────────────
@@ -1539,6 +1541,7 @@ class AppWindow(QtWidgets.QMainWindow):
             mode=self.config.camera_mode,
             index=self.config.camera_index,
             rtsp_url=self.config.camera_rtsp_url,
+            read_zone=parse_read_zone(self.config.alpr_roi),
         )
         self.camera_service.frame_ready.connect(self.main_view.update_frame)
         self.camera_service.status_changed.connect(self.main_view.set_camera_status)

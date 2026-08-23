@@ -94,6 +94,9 @@ class AppConfig:
     # Seconds the GREEN state counts down before auto-confirming ALLOW.
     # 0 disables auto-continue entirely (every decision stays manual).
     auto_allow_seconds: int
+    # Plate read zone: "x,y,w,h" as fractions of the frame, empty = full frame.
+    # A software zoom for a camera that watches a whole yard — see utils/roi.py.
+    alpr_roi: str
     # ── Staff face attendance ────────────────────────────────
     # A station with no webcam, or one where the face stack failed to
     # install, sets face_attendance_enabled=false and behaves exactly like a
@@ -279,6 +282,7 @@ def load_config() -> AppConfig:
         auto_allow_seconds=max(
             0, _parse_int("AUTO_ALLOW_SECONDS", get("AUTO_ALLOW_SECONDS", "5"), 5)
         ),
+        alpr_roi=str(get("ALPR_ROI", "") or "").strip(),
         face_attendance_enabled=_parse_bool(
             "FACE_ATTENDANCE_ENABLED", get("FACE_ATTENDANCE_ENABLED", "true"), True
         ),
@@ -342,6 +346,7 @@ def save_config(config: AppConfig) -> None:
         f"SYNC_INTERVAL_SECONDS={config.sync_interval_seconds}",
         f"DEVICE_NAME={config.device_name}",
         f"AUTO_ALLOW_SECONDS={config.auto_allow_seconds}",
+        f"ALPR_ROI={config.alpr_roi}",
         f"FACE_ATTENDANCE_ENABLED={str(config.face_attendance_enabled).lower()}",
         f"FACE_CAMERA_INDEX={config.face_camera_index}",
         f"FACE_MAX_FPS={config.face_max_fps}",

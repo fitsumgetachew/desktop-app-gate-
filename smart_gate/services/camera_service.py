@@ -9,6 +9,7 @@ import cv2
 from PySide6 import QtCore, QtGui
 
 from smart_gate.utils.paths import get_detector_model_path
+from smart_gate.utils.roi import ReadZone
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +42,22 @@ class CameraWorker(QtCore.QThread):
     # plate, confidence, raw_text, ocr_confidence, crop (numpy array as object)
     plate_detected = QtCore.Signal(str, float, str, float, object)
 
-    def __init__(self, mode: str, index: int, rtsp_url: str) -> None:
+    def __init__(
+        self,
+        mode: str,
+        index: int,
+        rtsp_url: str,
+        read_zone: Optional[ReadZone] = None,
+    ) -> None:
         super().__init__()
         self.mode = mode
         self.index = index
         self.rtsp_url = rtsp_url
+        # The plate read zone: the AI sees only this crop, at full pixel
+        # density — a software zoom for a camera that watches a whole yard.
+        # The preview still shows the entire frame, with the zone outlined so
+        # the operator can see (and aim) what is actually being read.
+        self.read_zone = read_zone
         self._stop_flag = False
         self._last_frame = None
         self._recognizer = None
@@ -104,7 +116,12 @@ class CameraWorker(QtCore.QThread):
                 ):
                     self._last_alpr_ts = now
                     try:
-                        result = self._recognizer.process_frame(frame)
+                        alpr_view = (
+                            self.read_zone.apply(frame)
+                            if self.read_zone is not None
+                            else frame
+                        )
+                        result = self._recognizer.process_frame(alpr_view)
                         if result is not None:
                             self.plate_detected.emit(
                                 result.plate_number,
@@ -116,7 +133,7 @@ class CameraWorker(QtCore.QThread):
                     except Exception:
                         logger.debug("ALPR process_frame error", exc_info=True)
 
-                image = self._to_qimage(frame)
+                image = self._to_qimage(self._preview_frame(frame))
                 if image is not None:
                     self.frame_ready.emit(image)
                 # USB capture returns instantly, so pace the loop manually.
@@ -168,6 +185,24 @@ class CameraWorker(QtCore.QThread):
             return None
         return cap
 
+    def _preview_frame(self, frame):
+        """The frame the guard sees: full view, read zone outlined.
+
+        Drawn on a copy — ``_last_frame`` is what evidence captures use, and an
+        orange rectangle must never end up burned into an evidence photo.
+        """
+        if self.read_zone is None or frame is None:
+            return frame
+        h, w = frame.shape[:2]
+        x1, y1, x2, y2 = self.read_zone.pixel_rect(w, h)
+        shown = frame.copy()
+        cv2.rectangle(shown, (x1, y1), (x2, y2), (0, 122, 255), 2)
+        cv2.putText(
+            shown, "PLATE READ ZONE", (x1 + 6, max(y1 - 8, 16)),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 122, 255), 2,
+        )
+        return shown
+
     @staticmethod
     def _to_qimage(frame) -> Optional[QtGui.QImage]:
         if frame is None:
@@ -184,9 +219,15 @@ class CameraService(QtCore.QObject):
     # plate, confidence, raw_text, ocr_confidence, crop (numpy array as object)
     plate_detected = QtCore.Signal(str, float, str, float, object)
 
-    def __init__(self, mode: str, index: int, rtsp_url: str) -> None:
+    def __init__(
+        self,
+        mode: str,
+        index: int,
+        rtsp_url: str,
+        read_zone: Optional[ReadZone] = None,
+    ) -> None:
         super().__init__()
-        self.worker = CameraWorker(mode, index, rtsp_url)
+        self.worker = CameraWorker(mode, index, rtsp_url, read_zone=read_zone)
         self.worker.frame_ready.connect(self.frame_ready.emit)
         self.worker.status_changed.connect(self.status_changed.emit)
         self.worker.plate_detected.connect(self.plate_detected.emit)

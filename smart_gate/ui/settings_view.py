@@ -367,6 +367,17 @@ class SettingsPage(QtWidgets.QWidget):
         stg_form.setSpacing(10)
         stg_form.setLabelAlignment(QtCore.Qt.AlignRight)
 
+        self.alpr_roi = QtWidgets.QLineEdit()
+        self.alpr_roi.setMinimumHeight(34)
+        self.alpr_roi.setPlaceholderText("x,y,w,h as fractions — e.g. 0.55,0.25,0.45,0.55")
+        self.alpr_roi.setToolTip(
+            "Plate read zone: the AI reads only this part of the lane camera,\n"
+            "at full resolution — a software zoom for a camera that sees the\n"
+            "whole yard. The preview outlines the zone in orange. Four numbers,\n"
+            "each 0-1: left offset, top offset, width, height.\n"
+            "Empty = read the entire frame."
+        )
+
         self.evidence_dir = QtWidgets.QLineEdit()
         self.evidence_dir.setMinimumHeight(34)
         self.sync_interval = QtWidgets.QSpinBox()
@@ -374,6 +385,7 @@ class SettingsPage(QtWidgets.QWidget):
         self.sync_interval.setMinimumHeight(34)
         self.sync_interval.setSuffix(" seconds")
 
+        stg_form.addRow("Plate read zone", self.alpr_roi)
         stg_form.addRow("Evidence Dir", self.evidence_dir)
         stg_form.addRow("Sync Interval", self.sync_interval)
 
@@ -488,6 +500,7 @@ class SettingsPage(QtWidgets.QWidget):
         self.face_max_fps.setValue(config.face_max_fps)
         self.face_tolerance.setValue(config.face_tolerance)
         self.face_min_confidence.setValue(config.face_min_confidence)
+        self.alpr_roi.setText(config.alpr_roi)
         self.evidence_dir.setText(config.evidence_dir)
         self.sync_interval.setValue(config.sync_interval_seconds)
         self.auto_allow_seconds.setValue(config.auto_allow_seconds)
@@ -531,6 +544,7 @@ class SettingsPage(QtWidgets.QWidget):
         config.face_max_fps = float(self.face_max_fps.value())
         config.face_tolerance = float(self.face_tolerance.value())
         config.face_min_confidence = float(self.face_min_confidence.value())
+        config.alpr_roi = self.alpr_roi.text().strip()
         config.evidence_dir = self.evidence_dir.text().strip()
         config.sync_interval_seconds = int(self.sync_interval.value())
         config.auto_allow_seconds = int(self.auto_allow_seconds.value())
