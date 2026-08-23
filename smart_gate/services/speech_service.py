@@ -18,12 +18,20 @@ from inside the gate decision path:
 pyttsx3 speaks through whatever the OS exposes, a Bluetooth speaker paired at
 OS level included. That pairing is the operating system's business; this module
 just calls the API.
+
+Backend order on Linux: pyttsx3 wants the *old* espeak shared library
+(``libespeak.so.1``, package ``libespeak1``), which desktop Ubuntu no longer
+ships — but it does ship speech-dispatcher, so when pyttsx3 cannot build, the
+worker falls back to the ``spd-say`` command before giving up. On Windows
+pyttsx3 drives the built-in SAPI5 voices and needs nothing extra.
 """
 
 from __future__ import annotations
 
 import logging
 import queue
+import shutil
+import subprocess
 import threading
 from typing import Optional, Protocol, runtime_checkable
 
@@ -129,28 +137,57 @@ class Pyttsx3Speaker:
             engine.setProperty("rate", self._rate)
         return engine
 
+    def _find_fallback_command(self):
+        """A command-line TTS to use when pyttsx3 cannot build.
+
+        speech-dispatcher's ``spd-say`` ships with desktop Ubuntu (it powers
+        the Orca screen reader), so it is present on exactly the machines where
+        pyttsx3's espeak driver is most likely to be missing. ``-w`` waits for
+        the utterance to finish, which is what paces the queue.
+        """
+        cmd = shutil.which("spd-say")
+        if cmd:
+            return [cmd, "-w"]
+        return None
+
     def _run(self) -> None:
+        fallback = None
         try:
             self._engine = self._build_engine()
         except Exception:
-            if not self._warned:
-                self._warned = True
-                logger.warning(
-                    "No speech engine available — attendance reminders will be "
-                    "shown on screen only",
-                    exc_info=True,
-                )
-            self._available = False
-            self._drain()
-            return
+            fallback = self._find_fallback_command()
+            if fallback is None:
+                if not self._warned:
+                    self._warned = True
+                    logger.warning(
+                        "No speech engine available — attendance reminders will "
+                        "be shown on screen only (Linux fix: sudo apt install "
+                        "libespeak1, or install speech-dispatcher)",
+                        exc_info=True,
+                    )
+                self._available = False
+                self._drain()
+                return
+            logger.info(
+                "pyttsx3 unavailable — speaking through %s instead", fallback[0]
+            )
 
         while True:
             text = self._queue.get()
             if text is None:
                 break
             try:
-                self._engine.say(text)
-                self._engine.runAndWait()
+                if fallback is not None:
+                    subprocess.run(
+                        fallback + [text],
+                        timeout=30,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                else:
+                    self._engine.say(text)
+                    self._engine.runAndWait()
             except Exception:
                 # A USB headset unplugged mid-sentence must not take the
                 # banner down with it.
@@ -158,10 +195,11 @@ class Pyttsx3Speaker:
                 self._available = False
                 self._drain()
                 return
-        try:
-            self._engine.stop()
-        except Exception:
-            logger.debug("Speech engine stop failed", exc_info=True)
+        if self._engine is not None:
+            try:
+                self._engine.stop()
+            except Exception:
+                logger.debug("Speech engine stop failed", exc_info=True)
 
     def _drain(self) -> None:
         """Discard anything queued once speech is known to be impossible."""

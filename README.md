@@ -21,6 +21,18 @@ Production-ready Python desktop application for University Smart Gate Vehicle Ac
 - `smart_gate/utils` config, paths, logging
 
 ## Setup (Ubuntu)
+
+0. System packages the Python stack needs (one-time):
+
+```bash
+# dlib compiles from source on Linux (~5-10 min); it needs these:
+sudo apt install build-essential cmake
+# voice output for the attendance reminders (either works; libespeak1 is
+# what pyttsx3 loads directly, speech-dispatcher is the fallback the app
+# uses automatically when it is missing):
+sudo apt install libespeak1 espeak
+```
+
 1. Create a virtual environment and install dependencies:
 
 ```bash
@@ -40,6 +52,58 @@ cp .env.example .env
 ```bash
 python -m smart_gate
 ```
+
+## Setup (Windows 10/11, x64) — clone and run
+
+Everything is prebuilt on Windows: **no Visual Studio, no CMake, no compiling.**
+The one rule is to use the setup script rather than `pip install -r
+requirements.txt` — a plain install would try to compile dlib from source,
+which is exactly the toolchain the script avoids (it installs the prebuilt
+`dlib-bin` wheel instead, then everything else in a dependency-safe order).
+
+1. Install once:
+   - [Python 3.12 (64-bit)](https://www.python.org/downloads/) — tick
+     **"Add python.exe to PATH"** in the installer.
+   - [Git for Windows](https://git-scm.com/download/win).
+
+2. Clone and set up (PowerShell):
+
+```powershell
+git clone git@github.com:fitsumgetachew/desktop-app-gate-.git
+cd desktop-app-gate-
+powershell -ExecutionPolicy Bypass -File scripts\setup_windows.ps1
+```
+
+   The script creates `.venv`, installs everything (~5 minutes on a normal
+   connection), copies `.env.example` to `.env`, and ends with an import smoke
+   test that prints `ALL IMPORTS OK`.
+
+3. Edit `.env` (Notepad is fine): sign-in mode, camera settings — same keys as
+   on Linux, documented in **Configuration** below.
+
+4. Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m smart_gate
+```
+
+Windows notes:
+
+- **Voice output works out of the box** — pyttsx3 drives the built-in Windows
+  SAPI5 voices; nothing to install (on Linux this needs espeak, see above).
+- **Webcam permission**: Settings → Privacy & security → Camera → allow
+  desktop apps to access the camera. If the attendance panel says the camera
+  is unavailable, this is the first thing to check.
+- **First run needs internet once**: PaddleOCR downloads its OCR models
+  (~15 MB) to `%USERPROFILE%\.paddleocr` on first plate read. After that the
+  station runs fully offline.
+- **The Hikvision RTSP camera** must be reachable from the PC (same LAN /
+  correct static IP). Windows Defender Firewall does not block *outgoing* RTSP,
+  so no rule is normally needed.
+- App data (database, logs, evidence) lives under
+  `%LOCALAPPDATA%\University\SmartGate`.
+- If PowerShell refuses to run scripts, the `-ExecutionPolicy Bypass` flag in
+  the command above is the supported way around it for a single run.
 
 ## Sign-in modes
 

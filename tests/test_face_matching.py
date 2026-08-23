@@ -37,8 +37,10 @@ PROBE = _vec(0.0)
 
 
 def test_reference_thresholds_are_the_ones_the_department_uses():
-    assert FACE_TOLERANCE == 0.45
-    assert FACE_MIN_CONFIDENCE == 55.0
+    """attendance-system/face_system: FACE_MATCH_TOLERANCE = 0.5, and its live
+    path has no binding confidence gate (45% == distance 0.55 > tolerance)."""
+    assert FACE_TOLERANCE == 0.50
+    assert FACE_MIN_CONFIDENCE == 45.0
 
 
 # ── Accept ────────────────────────────────────────────────────────────
@@ -96,7 +98,7 @@ def test_a_distance_exactly_on_the_tolerance_is_accepted():
 
 
 def test_a_distance_just_over_the_tolerance_is_rejected():
-    known = [KnownFace("stf-1", "Abebe", _vec(0.4501))]
+    known = [KnownFace("stf-1", "Abebe", _vec(0.5001))]
 
     assert identify(PROBE, known) is None
 

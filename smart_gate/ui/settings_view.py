@@ -336,13 +336,16 @@ class SettingsPage(QtWidgets.QWidget):
             "much above 3 and the two slow each other down."
         )
         self.face_tolerance = QtWidgets.QDoubleSpinBox()
-        self.face_tolerance.setRange(0.10, 1.00)
+        # 0.30-0.60, matching the loader's clamp. This box once allowed 0.10,
+        # which rejects every real face on earth while the camera looks healthy
+        # — recognition died silently until someone measured the distances.
+        self.face_tolerance.setRange(0.30, 0.60)
         self.face_tolerance.setSingleStep(0.05)
         self.face_tolerance.setDecimals(2)
         self.face_tolerance.setMinimumHeight(34)
         self.face_tolerance.setToolTip(
             "Lower is stricter: fewer wrong matches, more missed ones.\n"
-            "0.45 is the value the university's attendance system uses."
+            "0.50 is what the university's running attendance system uses."
         )
         self.face_min_confidence = QtWidgets.QDoubleSpinBox()
         self.face_min_confidence.setRange(0.0, 100.0)

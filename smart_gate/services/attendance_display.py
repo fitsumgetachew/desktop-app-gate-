@@ -36,6 +36,12 @@ LEVEL_INFO = "info"
 LEVEL_NEUTRAL = "neutral"
 
 IDLE_TEXT = "Look at the camera"
+
+# Badge wording. Attendance language, not access control — the barrier decision
+# lives on the plate side of the screen and must not be confused with this.
+BADGE_RECORDED = "ATTENDANCE RECORDED"
+BADGE_ALREADY = "ALREADY RECORDED"
+BADGE_UNRECOGNISED = "NOT RECOGNISED"
 UNRECOGNISED_TEXT = "Not recognised"
 
 # How long a confirmation stays up before the panel returns to idle.
@@ -50,6 +56,13 @@ class AttendancePanelState:
     # Kept so the caller can log or test without re-parsing the text.
     staff_uid: Optional[str] = None
     full_name: Optional[str] = None
+    # The panel is read from across a room, at a glance, by someone already
+    # walking. One sentence does not survive that, so the same information is
+    # also carried in three pieces the view can size independently: who
+    # (headline), what happened (badge), and the detail nobody has to read.
+    headline: str = ""
+    badge: str = ""
+    detail: str = ""
 
     @property
     def transient(self) -> bool:
@@ -64,7 +77,10 @@ def _clock(timestamp: Optional[float] = None) -> str:
 
 
 def idle() -> AttendancePanelState:
-    return AttendancePanelState(AttendanceStatus.IDLE, IDLE_TEXT, LEVEL_IDLE)
+    return AttendancePanelState(
+        AttendanceStatus.IDLE, IDLE_TEXT, LEVEL_IDLE,
+        headline=IDLE_TEXT, badge="", detail="",
+    )
 
 
 def recognised(
@@ -76,6 +92,9 @@ def recognised(
         LEVEL_OK,
         staff_uid=staff_uid,
         full_name=full_name,
+        headline=full_name,
+        badge=BADGE_RECORDED,
+        detail=f"Attendance recorded at {_clock(timestamp)}",
     )
 
 
@@ -94,12 +113,18 @@ def suppressed(
         LEVEL_INFO,
         staff_uid=staff_uid,
         full_name=full_name,
+        headline=full_name,
+        badge=BADGE_ALREADY,
+        detail=f"Already recorded at {_clock(since)}",
     )
 
 
 def unrecognised() -> AttendancePanelState:
     return AttendancePanelState(
-        AttendanceStatus.UNRECOGNISED, UNRECOGNISED_TEXT, LEVEL_NEUTRAL
+        AttendanceStatus.UNRECOGNISED, UNRECOGNISED_TEXT, LEVEL_NEUTRAL,
+        headline=UNRECOGNISED_TEXT,
+        badge=BADGE_UNRECOGNISED,
+        detail="Look at the camera, or see the guard",
     )
 
 

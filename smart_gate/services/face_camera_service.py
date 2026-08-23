@@ -44,6 +44,9 @@ from smart_gate.services.face_overlay import (
     build_detection,
 )
 from smart_gate.services.face_recognition_service import (
+    MatchVoter,
+)  # noqa: F401
+from smart_gate.services.face_recognition_service import (
     FaceMatch,
     detect_and_encode,
     face_index,
@@ -84,6 +87,13 @@ class FaceCameraWorker(QtCore.QThread):
         self._conn: Optional[sqlite3.Connection] = None
         self._attendance: Optional[AttendanceService] = None
         self._last_frame = None
+        # min_votes=1: commit on the first frame that clears the tolerance,
+        # exactly as the department's running system does — every vote already
+        # passed the distance gate, so waiting for a second one only added a
+        # delay (and, on a borderline face, often an infinite one). The window
+        # still does the useful half: a committed name survives ~5 passes
+        # (~1.7 s) of misses, so it cannot strobe against "Not recognised".
+        self._voter = MatchVoter(window=5, min_votes=1)
 
     def stop(self) -> None:
         self._stop_flag = True
@@ -211,8 +221,8 @@ class FaceCameraWorker(QtCore.QThread):
             return
 
         boxes = [face.box for face in faces]
-        tolerance = getattr(self._config, "face_tolerance", 0.45)
-        min_confidence = getattr(self._config, "face_min_confidence", 55.0)
+        tolerance = getattr(self._config, "face_tolerance", 0.50)
+        min_confidence = getattr(self._config, "face_min_confidence", 45.0)
         match: Optional[FaceMatch] = None
         for face in faces:
             if face.encoding is None:
@@ -223,6 +233,11 @@ class FaceCameraWorker(QtCore.QThread):
                 match is None or candidate.distance < match.distance
             ):
                 match = candidate
+
+        # A face sitting near the tolerance flips side to side between frames;
+        # voting over a short window is what stops a name strobing against
+        # "Not recognised". Every vote still cleared the threshold on its own.
+        match = self._voter.vote(match)
 
         self.detection_changed.emit(
             build_detection(

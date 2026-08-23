@@ -1,0 +1,28 @@
+# Windows install set — used by scripts\setup_windows.ps1, which installs
+# dlib-bin (prebuilt) and face-recognition (--no-deps) BEFORE this file.
+#
+# This file deliberately omits dlib and face-recognition: naming either here
+# would make pip try to compile dlib from source, which on Windows needs
+# Visual Studio C++ Build Tools + CMake. The prebuilt dlib-bin wheel makes
+# that whole toolchain unnecessary.
+#
+# Keep versions in lockstep with requirements.txt (the Linux set).
+
+# UI
+PySide6==6.7.2
+# Camera + image processing
+opencv-python==4.10.0.84
+numpy==1.26.4
+# Backend API client
+requests>=2.32,<3
+# ALPR: plate detection (ONNX) + OCR (PaddleOCR 2.x API)
+onnxruntime==1.24.4
+setuptools<81
+paddlepaddle==2.6.2
+paddleocr==2.10.0
+# face_recognition's pure-python deps (dlib itself comes from dlib-bin)
+face_recognition_models==0.3.0
+# Offline text-to-speech — on Windows this drives the built-in SAPI5 voices
+pyttsx3==2.90
+# Testing
+pytest==8.3.2

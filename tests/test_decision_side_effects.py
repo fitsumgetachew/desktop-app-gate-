@@ -12,6 +12,8 @@ and the sync trigger is skipped because the window is offline.
 import sqlite3
 
 import pytest
+
+from smart_gate.services import attendance_display
 from PySide6 import QtWidgets
 
 import smart_gate.main as main_module
@@ -265,16 +267,25 @@ def test_recording_a_punch_clears_the_reminder(window):
 
 
 def test_a_recorded_punch_shows_a_confirmation(window):
+    """The panel is three pieces now — name, outcome badge, timestamp — so the
+    confirmation is asserted where each part actually lives."""
     window._on_punch_recorded(STAFF_UID, STAFF_NAME, local_day_start() + 120)
 
-    text = window.main_view.attendance_state_label.text()
-    assert STAFF_NAME in text and text.startswith("✓")
+    view = window.main_view
+    assert STAFF_NAME in view.attendance_state_label.text()
+    assert view.attendance_badge_label.text() == attendance_display.BADGE_RECORDED
+    assert "recorded" in view.attendance_detail_label.text().lower()
 
 
 def test_a_suppressed_punch_shows_the_gentle_wording(window):
+    """Still reassurance rather than rejection: they already punched, which is
+    not a failure and must not read like one."""
     window._on_punch_suppressed(STAFF_UID, STAFF_NAME, local_day_start() + 60)
 
-    assert "already recorded" in window.main_view.attendance_state_label.text()
+    view = window.main_view
+    assert STAFF_NAME in view.attendance_state_label.text()
+    assert view.attendance_badge_label.text() == attendance_display.BADGE_ALREADY
+    assert "already recorded" in view.attendance_detail_label.text().lower()
 
 
 def test_an_unrecognised_face_never_touches_the_alarm(window):

@@ -289,13 +289,16 @@ def load_config() -> AppConfig:
         face_max_fps=_parse_float(
             "FACE_MAX_FPS", get("FACE_MAX_FPS", "3"), 3.0, 0.5, 15.0
         ),
-        # Defaults from the reference implementation
-        # (attendance-system/web_app/app.py :: verify_face_with_confidence).
+        # Defaults and floor from the department's proven live system
+        # (attendance-system/face_system: tolerance 0.5, distance-only gate).
+        # The 0.30 floor is not cosmetic: same-person distances run 0.2-0.45,
+        # so a tolerance below it rejects every real face while the camera
+        # looks perfectly healthy. A configured 0.1 did exactly that once.
         face_tolerance=_parse_float(
-            "FACE_TOLERANCE", get("FACE_TOLERANCE", "0.45"), 0.45, 0.1, 1.0
+            "FACE_TOLERANCE", get("FACE_TOLERANCE", "0.50"), 0.50, 0.30, 0.60
         ),
         face_min_confidence=_parse_float(
-            "FACE_MIN_CONFIDENCE", get("FACE_MIN_CONFIDENCE", "55.0"), 55.0, 0.0, 100.0
+            "FACE_MIN_CONFIDENCE", get("FACE_MIN_CONFIDENCE", "45.0"), 45.0, 0.0, 100.0
         ),
         cameras=cameras,
         endpoints=endpoints,

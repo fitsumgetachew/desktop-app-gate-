@@ -123,6 +123,32 @@ _BARRIER_SIGNAL_STYLE = (
 )
 
 
+def _attendance_panel_style(background: str, foreground: str) -> str:
+    """The whole block is the colour, not just a strip of text behind it —
+    a state you can read from the doorway rather than one you have to look for."""
+    return (
+        f"QFrame#AttendancePanel {{ background-color: {background};"
+        " border-radius: 10px; }"
+    )
+
+
+def _attendance_headline_style(foreground: str) -> str:
+    """The name, sized to be the thing you see first."""
+    return (
+        f"color: {foreground}; font-size: 30px; font-weight: 800;"
+        " letter-spacing: 0.5px; background: transparent;"
+    )
+
+
+def _attendance_badge_style(background: str, foreground: str) -> str:
+    """A pill that says what happened, in words a glance can finish."""
+    return (
+        f"color: {foreground}; background-color: rgba(255,255,255,0.22);"
+        " font-size: 15px; font-weight: 800; letter-spacing: 1.5px;"
+        " padding: 6px 18px; border-radius: 14px;"
+    )
+
+
 def _attendance_state_style(background: str, foreground: str) -> str:
     return (
         f"background-color: {background}; color: {foreground}; font-size: 18px;"
@@ -464,11 +490,39 @@ class MainGateView(QtWidgets.QWidget):
         layout.addWidget(self.attendance_camera_label, 1)
 
         # The recognition result: the one thing a person walking up looks at.
+        # Three pieces, not one sentence. This is read at a glance, from across
+        # the room, by somebody already walking past: the name has to carry, the
+        # outcome has to be unmistakable, and the timestamp only has to be there
+        # for whoever stops to check it.
+        self.attendance_panel = QtWidgets.QFrame()
+        self.attendance_panel.setObjectName("AttendancePanel")
+        panel_box = QtWidgets.QVBoxLayout(self.attendance_panel)
+        panel_box.setContentsMargins(18, 14, 18, 14)
+        panel_box.setSpacing(8)
+
         self.attendance_state_label = QtWidgets.QLabel("")
+        self.attendance_state_label.setObjectName("AttendanceHeadline")
         self.attendance_state_label.setAlignment(QtCore.Qt.AlignCenter)
         self.attendance_state_label.setWordWrap(True)
-        self.attendance_state_label.setMinimumHeight(58)
-        layout.addWidget(self.attendance_state_label)
+        panel_box.addWidget(self.attendance_state_label)
+
+        self.attendance_badge_label = QtWidgets.QLabel("")
+        self.attendance_badge_label.setObjectName("AttendanceBadge")
+        self.attendance_badge_label.setAlignment(QtCore.Qt.AlignCenter)
+        badge_row = QtWidgets.QHBoxLayout()
+        badge_row.addStretch(1)
+        badge_row.addWidget(self.attendance_badge_label)
+        badge_row.addStretch(1)
+        panel_box.addLayout(badge_row)
+
+        self.attendance_detail_label = QtWidgets.QLabel("")
+        self.attendance_detail_label.setObjectName("AttendanceDetail")
+        self.attendance_detail_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.attendance_detail_label.setWordWrap(True)
+        panel_box.addWidget(self.attendance_detail_label)
+
+        self.attendance_panel.setMinimumHeight(120)
+        layout.addWidget(self.attendance_panel)
 
         # Car-without-attendance reminder, raised by the gate decision path.
         self.attendance_notice_banner = QtWidgets.QLabel("")
@@ -1254,9 +1308,23 @@ class MainGateView(QtWidgets.QWidget):
         background, foreground = _ATTENDANCE_LEVEL_COLORS.get(
             state.level, _ATTENDANCE_LEVEL_COLORS[LEVEL_IDLE]
         )
-        self.attendance_state_label.setText(state.text)
+        self.attendance_state_label.setText(state.headline or state.text)
+        self.attendance_badge_label.setText(state.badge)
+        self.attendance_badge_label.setVisible(bool(state.badge))
+        self.attendance_detail_label.setText(state.detail)
+        self.attendance_detail_label.setVisible(bool(state.detail))
+        self.attendance_panel.setStyleSheet(
+            _attendance_panel_style(background, foreground)
+        )
         self.attendance_state_label.setStyleSheet(
-            _attendance_state_style(background, foreground)
+            _attendance_headline_style(foreground)
+        )
+        self.attendance_badge_label.setStyleSheet(
+            _attendance_badge_style(background, foreground)
+        )
+        self.attendance_detail_label.setStyleSheet(
+            f"color: {foreground}; font-size: 13px; font-weight: 600;"
+            " background: transparent;"
         )
         if state.transient:
             self._attendance_reset_timer.start(CONFIRMATION_HOLD_MS)

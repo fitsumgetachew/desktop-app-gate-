@@ -127,18 +127,46 @@ def test_say_never_blocks_the_caller():
 
 
 def test_a_missing_engine_degrades_to_silence_without_raising():
-    """A gate PC may have no audio device at all; the banner still shows."""
+    """A gate PC may have no audio device at all; the banner still shows.
+
+    Both backends are stubbed out — on a desktop Ubuntu dev box ``spd-say``
+    exists, and without the second stub this test would literally speak.
+    """
     speaker = Pyttsx3Speaker()
 
     def _no_engine():
         raise ImportError("no pyttsx3")
 
     speaker._build_engine = _no_engine
+    speaker._find_fallback_command = lambda: None
 
     speaker.say("Abebe, please record your attendance.")
     speaker.stop()
 
     assert speaker.available is False
+
+
+def test_a_missing_engine_falls_back_to_the_command_backend(monkeypatch):
+    """pyttsx3 needs libespeak.so.1, which desktop Ubuntu no longer ships —
+    the reminder must come out of speech-dispatcher instead of vanishing."""
+    import smart_gate.services.speech_service as speech
+
+    spoken = []
+
+    def _fake_run(cmd, **kwargs):
+        spoken.append(cmd[-1])
+
+    monkeypatch.setattr(speech.subprocess, "run", _fake_run)
+
+    speaker = Pyttsx3Speaker()
+    speaker._build_engine = lambda: (_ for _ in ()).throw(ImportError("no pyttsx3"))
+    speaker._find_fallback_command = lambda: ["/usr/bin/spd-say", "-w"]
+
+    speaker.say("Thank you Fitsum, your attendance is recorded.")
+    speaker.stop()
+
+    assert spoken == ["Thank you Fitsum, your attendance is recorded."]
+    assert speaker.available is True
 
 
 def test_an_engine_that_raises_mid_sentence_is_contained():

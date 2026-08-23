@@ -121,9 +121,11 @@ def test_face_attendance_defaults_match_the_reference_implementation(monkeypatch
     assert config.face_attendance_enabled is True
     assert config.face_camera_index == 0
     assert config.face_max_fps == 3.0
-    # verify_face_with_confidence's strict tolerance / min confidence.
-    assert config.face_tolerance == 0.45
-    assert config.face_min_confidence == 55.0
+    # The department's running live system (attendance-system/face_system)
+    # matches at tolerance 0.5 with no separate confidence gate; 45% is
+    # distance 0.55, so the distance check is the only binding one.
+    assert config.face_tolerance == 0.50
+    assert config.face_min_confidence == 45.0
 
 
 def test_face_settings_round_trip_through_save_config(monkeypatch, tmp_path: Path):
@@ -171,12 +173,13 @@ def test_bad_face_values_fall_back_instead_of_crashing_startup(monkeypatch, tmp_
     assert config.face_attendance_enabled is True
     assert config.face_camera_index == 0
     assert config.face_max_fps == 3.0
-    assert config.face_tolerance == 0.45
-    assert config.face_min_confidence == 55.0
+    assert config.face_tolerance == 0.50
+    assert config.face_min_confidence == 45.0
 
 
 def test_out_of_range_face_values_are_clamped(monkeypatch, tmp_path: Path):
-    """A tolerance of 9.9 would match every face against every staff member."""
+    """A tolerance of 9.9 would match every face against every staff member;
+    one of 0.1 rejects every real face. Both ends clamp."""
     env_path = tmp_path / "app.env"
     env_path.write_text(
         "FACE_CAMERA_INDEX=-1\n"
@@ -190,7 +193,10 @@ def test_out_of_range_face_values_are_clamped(monkeypatch, tmp_path: Path):
 
     assert config.face_camera_index == 0
     assert config.face_max_fps == 15.0
-    assert config.face_tolerance == 1.0
+    # Clamped into [0.30, 0.60]: above it everyone matches everyone, and below
+    # 0.30 nobody real ever matches — a configured 0.1 silently killed
+    # recognition once while the camera looked perfectly healthy.
+    assert config.face_tolerance == 0.60
     assert config.face_min_confidence == 100.0
 
 

@@ -21,6 +21,7 @@ the roster and still run the gate — it simply stores no embeddings.
 from __future__ import annotations
 
 import logging
+from collections import Counter, deque
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,8 +35,19 @@ logger = logging.getLogger(__name__)
 
 # Reference thresholds — see module docstring. Kept as module constants so a
 # test can move them without touching config, and so the numbers are greppable.
-FACE_TOLERANCE = 0.45
-FACE_MIN_CONFIDENCE = 55.0
+# Thresholds proven in the department's running student system
+# (attendance-system/face_system: FACE_MATCH_TOLERANCE = 0.5, distance-only).
+# 0.45+55% double-gated the same distance twice and rejected borderline-but-real
+# matches; 45% confidence == distance 0.55, so the distance check is the only
+# binding gate — matching the reference behaviour while keeping the knob.
+FACE_TOLERANCE = 0.50
+FACE_MIN_CONFIDENCE = 45.0
+
+# Below this, matching is mathematically dead: same-person distances run
+# 0.2-0.45, so a tolerance under 0.30 rejects every real face while looking
+# like a working camera. A configured value below it is clamped, loudly.
+MIN_SANE_TOLERANCE = 0.30
+MAX_SANE_TOLERANCE = 0.60
 
 # dlib's face encoder emits a 128-d float64 vector.
 ENCODING_DIM = 128
@@ -285,6 +297,57 @@ def decode_encoding(blob: Optional[bytes]) -> Optional[np.ndarray]:
 
 def encode_to_blob(encoding: np.ndarray) -> bytes:
     return np.asarray(encoding, dtype=ENCODING_DTYPE).tobytes()
+
+
+class MatchVoter:
+    """Smooths per-frame verdicts over a short window.
+
+    dlib returns a distance, not a decision, and a face near the tolerance
+    crosses it frame to frame as the head moves a degree or the light shifts.
+    Judging each frame alone turns that into a name flickering against "Not
+    recognised" — which reads as broken recognition even when the person is
+    matching more often than not.
+
+    The plate pipeline has voted across frames since the beginning; faces did
+    not, and this is the same idea. A window of recent verdicts, and a person is
+    committed once they win ``min_votes`` of it. Raising the vote count makes
+    recognition steadier and slower; it never makes it looser, because every
+    vote still had to clear the distance threshold on its own.
+    """
+
+    def __init__(self, window: int = 5, min_votes: int = 2) -> None:
+        self._window = max(1, int(window))
+        self._min_votes = max(1, int(min_votes))
+        self._recent: deque = deque(maxlen=self._window)
+
+    def reset(self) -> None:
+        self._recent.clear()
+
+    def vote(self, match: Optional[FaceMatch]) -> Optional[FaceMatch]:
+        """Record this frame's verdict and return the committed match, if any.
+
+        A frame with no match still counts — it is evidence, and it is what lets
+        a window empty out once somebody walks away.
+        """
+        self._recent.append(match)
+        tally: dict = {}
+        for seen in self._recent:
+            if seen is None:
+                continue
+            best = tally.get(seen.staff_uid)
+            # Keep each person's closest sighting in the window, mirroring the
+            # best-of-N photos rule inside identify().
+            if best is None or seen.distance < best.distance:
+                tally[seen.staff_uid] = seen
+        if not tally:
+            return None
+        counts = Counter(
+            seen.staff_uid for seen in self._recent if seen is not None
+        )
+        uid, votes = counts.most_common(1)[0]
+        if votes < self._min_votes:
+            return None
+        return tally[uid]
 
 
 class FaceIndex:

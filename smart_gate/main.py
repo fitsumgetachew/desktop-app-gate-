@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 import time
 import uuid
 from pathlib import Path
@@ -28,6 +29,7 @@ from smart_gate.services.barrier_controller import (
 from smart_gate.services.car_notice import CarNoticeService
 from smart_gate.services import enrolment_status
 from smart_gate.services.face_camera_service import FaceCameraService
+from smart_gate.services.attendance_speech import AttendanceAnnouncer
 from smart_gate.services.speech_service import build_speaker
 from smart_gate.services.api_client import ApiClient
 from smart_gate.services.auth_service import SessionExpiredError
@@ -421,6 +423,9 @@ class AppWindow(QtWidgets.QMainWindow):
         if self.attendance_enabled:
             self.face_service = FaceCameraService(config, self.db.db_path)
         self.speaker = build_speaker(self.attendance_enabled)
+        # Decides whether an outcome is worth saying out loud; the phrases
+        # themselves live in services/attendance_speech.py.
+        self.announcer = AttendanceAnnouncer()
         self.car_notice = CarNoticeService(self.staff_repo, self.punch_repo)
         # Visual only for now; a later phase swaps in the serial transport
         # behind the same signal_open() call. See barrier_controller.
@@ -674,13 +679,19 @@ class AppWindow(QtWidgets.QMainWindow):
         self._update_next_sync_label()
 
     def _refresh_manual_reasons(self) -> None:
-        reasons = self.reason_repo.list_active()
+        try:
+            reasons = self.reason_repo.list_active()
+        except sqlite3.ProgrammingError:
+            return  # shutting down: the connection is already closed
         if not reasons:
             reasons = ["Manual override"]
         self.main_view.set_reasons(reasons)
 
     def _refresh_recent_events(self) -> None:
-        rows = self.event_repo.list_recent()
+        try:
+            rows = self.event_repo.list_recent()
+        except sqlite3.ProgrammingError:
+            return  # shutting down: the connection is already closed
         self.main_view.set_recent_events(rows)
 
     def _handle_capture(self) -> None:
@@ -1040,15 +1051,32 @@ class AppWindow(QtWidgets.QMainWindow):
                 exc_info=True,
             )
 
+    def _announce(self, status, full_name: str | None = None) -> None:
+        """Speak an outcome, if this one is worth speaking.
+
+        The announcer suppresses repeats — a face held in front of the camera
+        produces a verdict several times a second, and saying it every time is
+        how a helpful prompt turns into something staff unplug. Wrapped whole:
+        attendance must never be able to break on a speech engine.
+        """
+        try:
+            phrase = self.announcer.announce(status, full_name)
+            if phrase:
+                self.speaker.say(phrase)
+        except Exception:
+            logger.warning("Attendance announcement failed", exc_info=True)
+
     def _on_face_unrecognised(self) -> None:
         """A face the index could not place. Neutral, and never an alarm —
         this is attendance, not security."""
         self.main_view.apply_attendance_state(attendance_display.unrecognised())
+        self._announce(attendance_display.AttendanceStatus.UNRECOGNISED)
 
     def _on_punch_recorded(self, staff_uid: str, full_name: str, punch_time: int) -> None:
         self.main_view.apply_attendance_state(
             attendance_display.recognised(full_name, punch_time, staff_uid)
         )
+        self._announce(attendance_display.AttendanceStatus.RECOGNISED, full_name)
         # They have now recorded attendance, so drop any reminder aimed at them
         # and re-arm it for a future day.
         self.car_notice.forget(staff_uid)
@@ -1059,6 +1087,7 @@ class AppWindow(QtWidgets.QMainWindow):
         self.main_view.apply_attendance_state(
             attendance_display.suppressed(full_name, since, staff_uid)
         )
+        self._announce(attendance_display.AttendanceStatus.SUPPRESSED, full_name)
 
     def _refresh_punch_count(self) -> None:
         if not self.attendance_enabled:
@@ -1695,6 +1724,10 @@ class AppWindow(QtWidgets.QMainWindow):
             self.main_view.fullscreen_button.setText("Exit Fullscreen")
 
     def closeEvent(self, event) -> None:
+        # Timers first: the 5 s refresh tick fired after conn.close() once and
+        # died on a closed database, taking the whole exit down with it.
+        self.refresh_timer.stop()
+        self.countdown_timer.stop()
         self._stop_countdown()
         self.alarm_service.stop()
         self.camera_service.stop()
@@ -1706,7 +1739,18 @@ class AppWindow(QtWidgets.QMainWindow):
         except Exception:
             logger.debug("Speaker stop failed", exc_info=True)
         self.sync_worker.stop()
-        self.sync_worker.wait(2000)
+        if not self.sync_worker.wait(4000):
+            logger.warning("Sync worker did not stop in time on exit")
+        # Short-lived request workers (lookup, permits, registration): letting
+        # the window be destroyed while one still runs is the classic
+        # "QThread: Destroyed while thread is still running" abort.
+        for worker in (
+            list(self._lookup_workers)
+            + list(self._temp_permit_workers)
+            + list(self._register_workers)
+        ):
+            if worker.isRunning():
+                worker.wait(2000)
         if self.logout_worker is not None and self.logout_worker.isRunning():
             if not self.logout_worker.wait(2000):
                 # The revoke is still in flight. Quitting must not leave the
