@@ -76,8 +76,15 @@ class Pyttsx3Speaker:
     engine is created inside the worker and never leaves it.
     """
 
-    def __init__(self, rate: Optional[int] = None) -> None:
+    def __init__(
+        self,
+        rate: Optional[int] = None,
+        voice: str = "",
+        volume: Optional[float] = None,
+    ) -> None:
         self._rate = rate
+        self._voice = (voice or "").strip()
+        self._volume = volume
         self._queue: "queue.Queue[Optional[str]]" = queue.Queue(maxsize=_QUEUE_SIZE)
         self._thread: Optional[threading.Thread] = None
         self._engine = None
@@ -135,6 +142,23 @@ class Pyttsx3Speaker:
         engine = pyttsx3.init()
         if self._rate:
             engine.setProperty("rate", self._rate)
+        if self._volume is not None:
+            engine.setProperty("volume", max(0.0, min(1.0, float(self._volume))))
+        if self._voice:
+            # Substring match against the installed voices, case-insensitive:
+            # "zira" or "female" is what a person remembers, not a registry id.
+            wanted = self._voice.lower()
+            for candidate in engine.getProperty("voices") or []:
+                haystack = f"{candidate.id} {getattr(candidate, 'name', '')}".lower()
+                if wanted in haystack:
+                    engine.setProperty("voice", candidate.id)
+                    break
+            else:
+                logger.warning(
+                    "TTS_VOICE %r matches no installed voice — using the default"
+                    " (run scripts/list_voices.py to see what this machine has)",
+                    self._voice,
+                )
         return engine
 
     def _find_fallback_command(self):
@@ -210,8 +234,148 @@ class Pyttsx3Speaker:
                 return
 
 
-def build_speaker(enabled: bool = True) -> Speaker:
-    """The speaker the app should use. Never returns ``None``, never raises."""
+class SpdSaySpeaker:
+    """Speaks through speech-dispatcher's ``spd-say`` — the Linux fallback.
+
+    Ubuntu desktops ship ``spd-say`` (it backs the Orca screen reader) even when
+    the ``libespeak.so.1`` that pyttsx3's driver wants is not installed. Same
+    contract as Pyttsx3Speaker: a queue, a daemon thread, never blocks, never
+    raises. ``-w`` makes each utterance finish before the next starts.
+    """
+
+    #: What TTS_VOICE accepts in this fallback (spd-say's fixed voice types).
+    VOICE_TYPES = (
+        "MALE1", "MALE2", "MALE3",
+        "FEMALE1", "FEMALE2", "FEMALE3",
+        "CHILD_MALE", "CHILD_FEMALE",
+    )
+
+    def __init__(
+        self,
+        rate: Optional[int] = None,
+        voice: str = "",
+        volume: Optional[float] = None,
+    ) -> None:
+        # pyttsx3 rate is words/minute (default ~200); spd-say takes -100..100.
+        self._rate_arg = None
+        if rate:
+            self._rate_arg = str(max(-100, min(100, int((rate - 200) * 0.5))))
+        self._volume_arg = None
+        if volume is not None:
+            self._volume_arg = str(max(-100, min(100, int(volume * 200 - 100))))
+        wanted = (voice or "").strip().upper().replace(" ", "_")
+        self._voice_arg = wanted if wanted in self.VOICE_TYPES else None
+        if voice and self._voice_arg is None:
+            logger.warning(
+                "TTS_VOICE %r is not an spd-say voice type %s — using the default",
+                voice, "/".join(self.VOICE_TYPES),
+            )
+        self._queue: "queue.Queue[Optional[str]]" = queue.Queue(maxsize=_QUEUE_SIZE)
+        self._thread: Optional[threading.Thread] = None
+        self._available = True
+        self._lock = threading.Lock()
+
+    @property
+    def available(self) -> bool:
+        return self._available
+
+    def say(self, text: str) -> None:
+        if not text or not self._available:
+            return
+        try:
+            self._ensure_thread()
+            self._queue.put_nowait(text)
+        except queue.Full:
+            logger.debug("Speech queue full — dropping a reminder")
+        except Exception:
+            logger.warning("Could not queue speech — continuing silently", exc_info=True)
+            self._available = False
+
+    def stop(self) -> None:
+        thread = self._thread
+        if thread is None:
+            return
+        try:
+            self._queue.put_nowait(None)
+        except queue.Full:
+            pass
+        thread.join(timeout=2)
+
+    def _ensure_thread(self) -> None:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._thread = threading.Thread(target=self._run, name="tts-spd", daemon=True)
+            self._thread.start()
+
+    def _run(self) -> None:
+        import subprocess  # noqa: PLC0415
+
+        while True:
+            text = self._queue.get()
+            if text is None:
+                return
+            command = ["spd-say", "-w"]
+            if self._rate_arg:
+                command += ["-r", self._rate_arg]
+            if self._volume_arg:
+                command += ["-i", self._volume_arg]
+            if self._voice_arg:
+                command += ["-t", self._voice_arg]
+            command.append(text)
+            try:
+                subprocess.run(
+                    command, timeout=30,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                logger.warning("spd-say failed — speech disabled", exc_info=True)
+                self._available = False
+                return
+
+
+def _pyttsx3_usable() -> bool:
+    """One cheap probe so the fallback decision happens at build time.
+
+    The probe engine is discarded: the real one must be created on the speaker
+    thread (drivers want to live where they were born).
+    """
+    try:
+        import pyttsx3  # noqa: PLC0415
+
+        engine = pyttsx3.init()
+        try:
+            engine.stop()
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
+def build_speaker(
+    enabled: bool = True,
+    voice: str = "",
+    rate: Optional[int] = None,
+    volume: Optional[float] = None,
+) -> Speaker:
+    """The speaker the app should use. Never returns ``None``, never raises.
+
+    Preference order: pyttsx3 (SAPI on Windows, espeak on Linux when
+    ``libespeak.so.1`` is installed) → ``spd-say`` (Linux desktops) → silence
+    with a warning. The voice knobs come from TTS_VOICE / TTS_RATE / TTS_VOLUME.
+    """
     if not enabled:
         return NullSpeaker()
-    return Pyttsx3Speaker()
+    if _pyttsx3_usable():
+        return Pyttsx3Speaker(rate=rate, voice=voice, volume=volume)
+    import shutil  # noqa: PLC0415
+
+    if shutil.which("spd-say"):
+        logger.info("pyttsx3 unavailable — speaking through spd-say instead")
+        return SpdSaySpeaker(rate=rate, voice=voice, volume=volume)
+    logger.warning(
+        "No speech engine available (install espeak/libespeak1 on Linux) — "
+        "attendance reminders will be shown on screen only"
+    )
+    return NullSpeaker()

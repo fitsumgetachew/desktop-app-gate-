@@ -15,7 +15,12 @@ from smart_gate.utils.cameras import (
     cameras_to_json,
     default_cameras,
 )
-from smart_gate.utils.paths import get_app_data_dir, get_default_evidence_dir
+from smart_gate.utils.environment import environment_key, environment_label
+from smart_gate.utils.paths import (
+    get_app_data_dir,
+    get_default_evidence_dir,
+    set_active_environment,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +102,11 @@ class AppConfig:
     # Plate read zone: "x,y,w,h" as fractions of the frame, empty = full frame.
     # A software zoom for a camera that watches a whole yard — see utils/roi.py.
     alpr_roi: str
+    # Spoken output. TTS_VOICE is matched by substring against installed
+    # voices (pyttsx3) or an spd-say voice type; see scripts/list_voices.py.
+    tts_voice: str
+    tts_rate: int
+    tts_volume: float
     # ── Staff face attendance ────────────────────────────────
     # A station with no webcam, or one where the face stack failed to
     # install, sets face_attendance_enabled=false and behaves exactly like a
@@ -115,6 +125,16 @@ class AppConfig:
     cameras: List[CameraSource]
     endpoints: Dict[str, str]
     config_path: Path
+
+    # Which server this station belongs to. Derived, never stored: the base
+    # URL is the single source of truth, and a stored copy could drift.
+    @property
+    def environment_key(self) -> str:
+        return environment_key(self.api_base_url)
+
+    @property
+    def environment_label(self) -> str:
+        return environment_label(self.api_base_url)
 
 
 def _parse_env_file(path: Path) -> Dict[str, str]:
@@ -254,8 +274,14 @@ def load_config() -> AppConfig:
         if face is not None:
             face_camera_index = face.index
 
+    # Everything below that touches a path must see the right environment,
+    # so it is activated here, in the one place every startup passes through.
+    set_active_environment(environment_key(get("API_BASE_URL", "http://localhost:8000")))
+
     evidence_dir = get("EVIDENCE_DIR", "").strip()
     if not evidence_dir:
+        # Per environment: an evidence photo taken against UAT has no business
+        # in production's folder. An explicit EVIDENCE_DIR is honoured as-is.
         evidence_dir = str(get_default_evidence_dir())
     else:
         path = Path(evidence_dir)
@@ -283,6 +309,9 @@ def load_config() -> AppConfig:
             0, _parse_int("AUTO_ALLOW_SECONDS", get("AUTO_ALLOW_SECONDS", "5"), 5)
         ),
         alpr_roi=str(get("ALPR_ROI", "") or "").strip(),
+        tts_voice=str(get("TTS_VOICE", "") or "").strip(),
+        tts_rate=_parse_int("TTS_RATE", get("TTS_RATE", "170"), 170),
+        tts_volume=_parse_float("TTS_VOLUME", get("TTS_VOLUME", "1.0"), 1.0, 0.0, 1.0),
         face_attendance_enabled=_parse_bool(
             "FACE_ATTENDANCE_ENABLED", get("FACE_ATTENDANCE_ENABLED", "true"), True
         ),
@@ -347,6 +376,9 @@ def save_config(config: AppConfig) -> None:
         f"DEVICE_NAME={config.device_name}",
         f"AUTO_ALLOW_SECONDS={config.auto_allow_seconds}",
         f"ALPR_ROI={config.alpr_roi}",
+        f"TTS_VOICE={config.tts_voice}",
+        f"TTS_RATE={config.tts_rate}",
+        f"TTS_VOLUME={config.tts_volume}",
         f"FACE_ATTENDANCE_ENABLED={str(config.face_attendance_enabled).lower()}",
         f"FACE_CAMERA_INDEX={config.face_camera_index}",
         f"FACE_MAX_FPS={config.face_max_fps}",

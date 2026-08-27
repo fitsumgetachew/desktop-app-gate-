@@ -15,6 +15,8 @@ import numpy as np
 import pytest
 
 from smart_gate.services.face_recognition_service import (
+    MatchVoter,
+    FaceMatch,
     FACE_MIN_CONFIDENCE,
     FACE_TOLERANCE,
     FaceIndex,
@@ -205,3 +207,39 @@ def test_an_empty_index_identifies_nobody():
 
     assert index.identify(PROBE) is None
     assert len(index) == 0
+
+
+# ── Person-to-person handover ─────────────────────────────────────────
+
+
+def _match(uid, d=0.35):
+    return FaceMatch(staff_uid=uid, full_name=uid, confidence=(1 - d) * 100, distance=d)
+
+
+def test_a_new_person_is_named_on_their_first_frame():
+    """The bug this pins: A punches, B steps up, and A's leftover votes won the
+    first second of B's turn — the station greeted B by A's name."""
+    voter = MatchVoter(window=5, min_votes=1)
+    for _ in range(5):
+        assert voter.vote(_match("staff-A")).staff_uid == "staff-A"
+
+    committed = voter.vote(_match("staff-B"))
+
+    assert committed is not None and committed.staff_uid == "staff-B"
+
+
+def test_the_window_still_bridges_missed_frames_of_the_same_person():
+    """The handover fix must not cost the anti-flicker behaviour it sat on."""
+    voter = MatchVoter(window=5, min_votes=1)
+    voter.vote(_match("staff-A"))
+    assert voter.vote(None).staff_uid == "staff-A"      # one miss: still A
+    assert voter.vote(None).staff_uid == "staff-A"
+
+
+def test_reset_forgets_the_previous_person():
+    """The worker resets on an empty frame — the gap between two people."""
+    voter = MatchVoter(window=5, min_votes=1)
+    voter.vote(_match("staff-A"))
+    voter.reset()
+
+    assert voter.vote(None) is None

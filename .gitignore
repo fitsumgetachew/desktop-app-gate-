@@ -36,3 +36,7 @@ data/
 
 # Evidence captures (runtime output — do not commit)
 evidence/
+
+# Local .env backups (contain credentials)
+.env.backup*
+.env.*.bak

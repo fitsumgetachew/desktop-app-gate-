@@ -213,6 +213,10 @@ class FaceCameraWorker(QtCore.QThread):
             return
 
         if not faces:
+            # Nobody in frame is the natural boundary between two people:
+            # forget the window here so the next face starts from nothing
+            # instead of inheriting the last person's votes.
+            self._voter.reset()
             # Emitted every pass, not only on change: this is what clears a box
             # left behind by someone who has walked away.
             self.detection_changed.emit(

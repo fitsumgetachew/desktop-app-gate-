@@ -296,12 +296,16 @@ class MainGateView(QtWidgets.QWidget):
         layout.addSpacing(24)
 
         # ── Centre group: gate/lane, user, online badge ──────────
+        # Which server this gate is talking to. Always visible: a station on
+        # the wrong environment looks perfectly healthy from every other angle.
+        self.environment_label = QtWidgets.QLabel("Server: -")
+        self.environment_label.setObjectName("HeaderEnvironment")
         self.gate_lane_label = QtWidgets.QLabel("Gate/Lane: -")
         self.user_label = QtWidgets.QLabel("User: -")
         self.online_status_label = QtWidgets.QLabel("Offline")
         self.online_status_label.setObjectName("HeaderBadgeOffline")
 
-        for lbl in (self.gate_lane_label, self.user_label):
+        for lbl in (self.environment_label, self.gate_lane_label, self.user_label):
             lbl.setSizePolicy(
                 QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred
             )
@@ -1084,6 +1088,24 @@ class MainGateView(QtWidgets.QWidget):
             self.vehicle_details_form.addRow(name, field)
 
         self.vehicle_details_empty.setVisible(not rows)
+
+    def set_environment(self, label: str) -> None:
+        self.environment_label.setText(f"Server: {label}")
+
+    def show_notice(self, message: str, seconds: int = 20) -> None:
+        """A brief, non-blocking banner — reuses the offline strip's slot.
+
+        Used for "you are now on a different server": worth saying once,
+        never worth a modal dialog in front of a queue of cars.
+        """
+        self.offline_banner.setText(message)
+        self.offline_banner.show()
+        QtCore.QTimer.singleShot(
+            max(1, seconds) * 1000,
+            lambda: self.offline_banner.hide()
+            if self.offline_banner.text() == message
+            else None,
+        )
 
     def set_offline_mode(self, active: bool, message: str = "") -> None:
         """Show the explicit 'running in offline mode' banner."""

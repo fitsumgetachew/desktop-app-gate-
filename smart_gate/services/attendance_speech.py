@@ -25,10 +25,13 @@ from typing import Dict, Optional
 from smart_gate.services.attendance_display import AttendanceStatus
 
 # ── The words. Edit freely. ──────────────────────────────────────────
+# Short on purpose: at a morning rush the station speaks once per person, and
+# a two-second sentence times a hundred staff is a queue. First name only —
+# never the full name (efficiency AND privacy at a public gate).
 PHRASES: Dict[AttendanceStatus, str] = {
-    AttendanceStatus.RECOGNISED: "Thank you {first_name}, your attendance is recorded.",
-    AttendanceStatus.SUPPRESSED: "{first_name}, your attendance is already recorded.",
-    AttendanceStatus.UNRECOGNISED: "Face not recognised. Please look at the camera.",
+    AttendanceStatus.RECOGNISED: "Thank you, {first_name}.",
+    AttendanceStatus.SUPPRESSED: "{first_name}, already recorded.",
+    AttendanceStatus.UNRECOGNISED: "Not recognised. Please look at the camera.",
 }
 
 # A face the camera cannot place is re-evaluated several times a second. Without

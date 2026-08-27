@@ -27,6 +27,7 @@ from smart_gate.utils.cameras import (
     CameraSource,
     new_camera_id,
 )
+from smart_gate.utils.environment import environment_label
 from smart_gate.utils.config import (
     AUTH_MODES,
     DEFAULT_PORTAL_SSO_URL,
@@ -183,7 +184,15 @@ class SettingsPage(QtWidgets.QWidget):
         self.env_mode = QtWidgets.QLineEdit()
         self.env_mode.setMinimumHeight(34)
 
+        # Derived from the URL as it is typed, so the operator sees which
+        # server (and therefore which local data set) a save would select.
+        self.environment_hint = QtWidgets.QLabel("")
+        self.environment_hint.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
+        self.environment_hint.setWordWrap(True)
+        self.api_base_url.textChanged.connect(self._refresh_environment_hint)
+
         sg_form.addRow("API Base URL", self.api_base_url)
+        sg_form.addRow("", self.environment_hint)
         sg_form.addRow("Environment", self.env_mode)
 
         card_layout.addWidget(server_group)
@@ -481,6 +490,13 @@ class SettingsPage(QtWidgets.QWidget):
     # ==============================================================
     #  Public API (unchanged)
     # ==============================================================
+    def _refresh_environment_hint(self, text: str = "") -> None:
+        label = environment_label(text or self.api_base_url.text())
+        self.environment_hint.setText(
+            f"Server: {label} — local data (cache, queues, roster, provisioning) "
+            "is kept separately per server."
+        )
+
     def set_device_id(self, device_id: str) -> None:
         """Show this machine's device id (not part of AppConfig — it lives in
         the device table, and the portal provisions against it)."""
@@ -489,6 +505,7 @@ class SettingsPage(QtWidgets.QWidget):
     def load_from_config(self, config: AppConfig) -> None:
         self._config = config
         self.api_base_url.setText(config.api_base_url)
+        self._refresh_environment_hint(config.api_base_url)
         self.env_mode.setText(config.env_mode)
         self.auth_mode.setCurrentText(config.auth_mode)
         self.portal_sso_url.setText(config.portal_sso_url)

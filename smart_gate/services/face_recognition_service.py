@@ -328,7 +328,18 @@ class MatchVoter:
 
         A frame with no match still counts — it is evidence, and it is what lets
         a window empty out once somebody walks away.
+
+        A match for a **different person** clears the window before it counts.
+        The window exists to bridge missed frames of the same face, not to
+        outvote a positive identification of someone new — without this, the
+        previous person's leftover sightings win the first second of the next
+        person's turn, and the station greets them by the wrong name.
         """
+        if match is not None and any(
+            seen is not None and seen.staff_uid != match.staff_uid
+            for seen in self._recent
+        ):
+            self._recent.clear()
         self._recent.append(match)
         tally: dict = {}
         for seen in self._recent:

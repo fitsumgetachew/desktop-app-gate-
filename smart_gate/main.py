@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import time
@@ -59,7 +60,12 @@ from smart_gate.ui.staff_enrolment_dialog import StaffEnrolmentDialog
 from smart_gate.utils.config import AppConfig, load_config, save_config
 from smart_gate.ui.theme import SIT_STYLESHEET
 from smart_gate.utils.logging import setup_logging
-from smart_gate.utils.paths import ensure_dir
+from smart_gate.utils.paths import (
+    adopt_legacy_database,
+    ensure_dir,
+    get_env_db_path,
+    get_last_environment_path,
+)
 from smart_gate.utils.plates import normalize_plate
 from smart_gate.utils.roi import parse_read_zone
 from smart_gate.utils.time import now_ts
@@ -381,7 +387,20 @@ class AppWindow(QtWidgets.QMainWindow):
 
         self.config = config
 
-        self.db = Database()
+        # One database per server environment (see utils/environment.py). A
+        # station moved from UAT to production must start clean against
+        # production — its own watermarks, its own queues — never carry UAT's
+        # cache along and drain UAT's punches into production's records.
+        env_key = config.environment_key
+        adopted = adopt_legacy_database(env_key)
+        if adopted is not None:
+            logger.info(
+                "Adopted the pre-partitioning database into environment %s (%s)",
+                env_key, config.environment_label,
+            )
+        self._environment_notice = self._note_environment_switch(env_key, config)
+
+        self.db = Database(get_env_db_path(env_key))
         self.conn = self.db.connect()
         init_db(self.conn)
 
@@ -424,7 +443,12 @@ class AppWindow(QtWidgets.QMainWindow):
         self.face_service: FaceCameraService | None = None
         if self.attendance_enabled:
             self.face_service = FaceCameraService(config, self.db.db_path)
-        self.speaker = build_speaker(self.attendance_enabled)
+        self.speaker = build_speaker(
+            self.attendance_enabled,
+            voice=config.tts_voice,
+            rate=config.tts_rate,
+            volume=config.tts_volume,
+        )
         # Decides whether an outcome is worth saying out loud; the phrases
         # themselves live in services/attendance_speech.py.
         self.announcer = AttendanceAnnouncer()
@@ -609,7 +633,11 @@ class AppWindow(QtWidgets.QMainWindow):
             device_check.get("gate_name"),
             device_check.get("lane_name"),
         )
+        self.main_view.set_environment(self.config.environment_label)
         self.stack.setCurrentWidget(self.main_view)
+        if self._environment_notice:
+            self.main_view.show_notice(self._environment_notice)
+            self._environment_notice = None
         self.camera_service.start()
         self._start_face_service()
         if not self.sync_worker.isRunning():
@@ -1571,6 +1599,45 @@ class AppWindow(QtWidgets.QMainWindow):
         if self._has_token():
             self.face_service.start()
 
+    @staticmethod
+    def _note_environment_switch(env_key: str, config: AppConfig) -> str | None:
+        """Record which environment this run uses; return a notice if it changed.
+
+        Best-effort on disk. The return value is shown once as a banner after
+        the main view exists — a server switch is worth saying plainly, and
+        never worth a modal dialog.
+        """
+        path = get_last_environment_path()
+        previous = None
+        try:
+            if path.exists():
+                previous = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            logger.debug("Could not read last-environment record", exc_info=True)
+        try:
+            path.write_text(
+                json.dumps({"key": env_key, "label": config.environment_label}),
+                encoding="utf-8",
+            )
+        except Exception:
+            logger.debug("Could not write last-environment record", exc_info=True)
+
+        logger.info(
+            "Server environment: %s (key %s)", config.environment_label, env_key
+        )
+        if previous and previous.get("key") and previous.get("key") != env_key:
+            was = previous.get("label") or previous.get("key")
+            logger.warning(
+                "Server environment changed since last run: %s -> %s. "
+                "Local data for each server is kept separately.",
+                was, config.environment_label,
+            )
+            return (
+                f"Now talking to {config.environment_label} (previously {was}). "
+                "Cache, queues and provisioning for each server are kept separately."
+            )
+        return None
+
     def _open_settings(self) -> None:
         self.settings_page.load_from_config(self.config)
         device = self.device_repo.get_device()
@@ -1579,6 +1646,8 @@ class AppWindow(QtWidgets.QMainWindow):
 
     def _on_settings_saved(self, config: AppConfig) -> None:
         auth_mode_changed = config.auth_mode != self.login_view.auth_mode
+        environment_changed = config.environment_key != self.config.environment_key
+        previous_environment_label = self.config.environment_label
         # Turning attendance on or off changes which layout the main view was
         # built with, and rebuilding that under a live session would strand
         # every signal AppWindow has already connected. A restart is cheap; a
@@ -1603,6 +1672,20 @@ class AppWindow(QtWidgets.QMainWindow):
         self._stop_countdown()
         self.countdown.set_seconds(config.auto_allow_seconds)
         self.login_view.set_portal_target(config.portal_sso_url, self.device.device_id)
+        if environment_changed:
+            # The database, evidence folder and roster photos are bound to the
+            # environment at startup, and three worker threads hold connections
+            # to them. Swapping all of that live is exactly the kind of
+            # half-switched state this partitioning exists to prevent — so the
+            # new server takes effect on the next start, and says so.
+            QtWidgets.QMessageBox.information(
+                self,
+                "Server changed",
+                f"The server is now {config.environment_label}.\n\n"
+                "Local data (cache, queues, roster, provisioning) is kept "
+                "separately per server. Restart Smart Gate to switch to it — "
+                f"until then this session keeps using {previous_environment_label}.",
+            )
         if auth_mode_changed:
             # The sign-in screen's widgets are built for one mode; swapping them
             # under a live session is not worth the state it would leave behind.
