@@ -148,7 +148,12 @@ class Pyttsx3Speaker:
             # Substring match against the installed voices, case-insensitive:
             # "zira" or "female" is what a person remembers, not a registry id.
             wanted = self._voice.lower()
-            for candidate in engine.getProperty("voices") or []:
+            voices = engine.getProperty("voices") or []
+            if wanted.isdigit() and 0 <= int(wanted) < len(voices):
+                # A bare number is the row from scripts/list_voices.py.
+                engine.setProperty("voice", voices[int(wanted)].id)
+                return engine
+            for candidate in voices:
                 haystack = f"{candidate.id} {getattr(candidate, 'name', '')}".lower()
                 if wanted in haystack:
                     engine.setProperty("voice", candidate.id)
@@ -264,11 +269,19 @@ class SpdSaySpeaker:
         if volume is not None:
             self._volume_arg = str(max(-100, min(100, int(volume * 200 - 100))))
         wanted = (voice or "").strip().upper().replace(" ", "_")
+        if wanted.isdigit():
+            # list_voices.py prints numbered rows, so a bare number is the
+            # obvious thing to type — accept it as an index into that list.
+            index = int(wanted)
+            wanted = (
+                self.VOICE_TYPES[index] if 0 <= index < len(self.VOICE_TYPES) else ""
+            )
         self._voice_arg = wanted if wanted in self.VOICE_TYPES else None
         if voice and self._voice_arg is None:
             logger.warning(
-                "TTS_VOICE %r is not an spd-say voice type %s — using the default",
-                voice, "/".join(self.VOICE_TYPES),
+                "TTS_VOICE %r is not an spd-say voice (use a number 0-%d or one "
+                "of %s) — using the default",
+                voice, len(self.VOICE_TYPES) - 1, "/".join(self.VOICE_TYPES),
             )
         self._queue: "queue.Queue[Optional[str]]" = queue.Queue(maxsize=_QUEUE_SIZE)
         self._thread: Optional[threading.Thread] = None
